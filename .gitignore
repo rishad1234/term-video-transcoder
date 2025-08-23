@@ -1,0 +1,108 @@
+# Project-specific files
+initial_planning.md
+
+# Compiled binaries
+transcoder
+transcoder.exe
+term-video-transcoder
+term-video-transcoder.exe
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries and coverage
+*.test
+*.out
+coverage.html
+coverage.xml
+
+# Go workspace and vendor
+go.work
+go.work.sum
+vendor/
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Logs
+*.log
+logs/
+
+# Output and processed files
+output/
+converted/
+processed/
+exports/
+
+# Sample media files (can be large)
+samples/
+test_media/
+test_videos/
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.webm
+*.flv
+*.wmv
+*.m4v
+*.3gp
+*.mpg
+*.mpeg
+*.ts
+*.mts
+
+# Audio files
+*.mp3
+*.wav
+*.aac
+*.flac
+*.ogg
+*.wma
+*.m4a
+
+# Image files (thumbnails, etc.)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# Compressed files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# Configuration with sensitive data
+config/secrets.json
+config/local.json
+.env
+.env.local
+
+# Performance and profiling
+*.prof
+*.pprof
+cpu.prof
+mem.prof
+
+# Documentation builds
+docs/build/
+site/
