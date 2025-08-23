@@ -63,10 +63,13 @@ func runInfo(filepath string) error {
 		writer = outputFile
 	}
 
-	// Display the information with verbose mode consideration
-	displayMediaInfo(info, verbose, writer)
+	// Determine verbosity: quiet overrides verbose
+	useVerbose := verbose && !quiet
+
+	// Display the information with verbosity consideration
+	displayMediaInfo(info, useVerbose, writer)
 	
-	if output != "" {
+	if output != "" && !quiet {
 		fmt.Printf("Media information saved to: %s\n", output)
 	}
 	

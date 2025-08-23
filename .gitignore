@@ -4,10 +4,10 @@ initial_planning.md
 # Internal testing directory
 internal_test/
 
-# Compiled binaries
-transcoder
+# Compiled binaries (only ignore files, not directories)
+/transcoder
 transcoder.exe
-term-video-transcoder
+/term-video-transcoder
 term-video-transcoder.exe
 
 # Go build artifacts

@@ -13,6 +13,7 @@ var (
 	
 	// Global flags
 	verbose bool
+	quiet   bool
 	output  string
 )
 
@@ -44,8 +45,9 @@ func Execute() error {
 }
 
 func init() {
-	// Global flags
-	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	// Global flags - verbose is now default
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", true, "verbose output (enabled by default)")
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode (minimal output)")
 	rootCmd.PersistentFlags().StringVarP(&output, "output", "o", "", "output file or directory")
 	
 	// Add version template
