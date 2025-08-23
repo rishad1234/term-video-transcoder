@@ -1,6 +1,9 @@
 # Project-specific files
 initial_planning.md
 
+# Internal testing directory
+internal_test/
+
 # Compiled binaries
 transcoder
 transcoder.exe
