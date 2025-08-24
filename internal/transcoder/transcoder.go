@@ -24,8 +24,25 @@ var SupportedFormats = map[string]bool{
 	"mov":  true,
 }
 
-// ConvertVideo converts a video file from one format to another
+// CustomParameters holds user-specified custom encoding parameters
+type CustomParameters struct {
+	VideoCodec   string // User-specified video codec
+	AudioCodec   string // User-specified audio codec  
+	VideoBitrate string // User-specified video bitrate (e.g., "2M", "1500k")
+	AudioBitrate string // User-specified audio bitrate (e.g., "192k", "128k")
+	Resolution   string // User-specified resolution (e.g., "1920x1080")
+	Framerate    string // User-specified framerate (e.g., "30", "24")
+}
+
+// ConvertVideo converts a video file from one format to another (legacy function)
 func ConvertVideo(inputPath, outputPath, preset string, presetExplicit, verbose bool) error {
+	// Call the new function with empty custom parameters
+	emptyParams := CustomParameters{}
+	return ConvertVideoWithCustomParams(inputPath, outputPath, preset, presetExplicit, false, emptyParams, verbose)
+}
+
+// ConvertVideoWithCustomParams converts a video file with custom parameters support
+func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetExplicit, customParamsSet bool, customParams CustomParameters, verbose bool) error {
 	// Step 1: Validate input file
 	if err := validateInputFile(inputPath); err != nil {
 		return err
@@ -46,11 +63,11 @@ func ConvertVideo(inputPath, outputPath, preset string, presetExplicit, verbose 
 		return fmt.Errorf("failed to analyze input: %w", err)
 	}
 	
-	// Step 4: Select optimal codecs
-	videoCodec, audioCodec, canCopy := selectCodecs(inputInfo, outputFormat, preset, presetExplicit, verbose)
+	// Step 4: Select optimal codecs (considering custom parameters)
+	videoCodec, audioCodec, canCopy := selectCodecsWithCustomParams(inputInfo, outputFormat, preset, presetExplicit, customParamsSet, customParams, verbose)
 	
-	// Step 5: Build FFmpeg command
-	cmd := buildFFmpegCommand(inputPath, outputPath, videoCodec, audioCodec, preset, verbose)
+	// Step 5: Build FFmpeg command (with custom parameters)
+	cmd := buildFFmpegCommandWithCustomParams(inputPath, outputPath, videoCodec, audioCodec, preset, customParams, verbose)
 	
 	// Step 6: Execute conversion
 	if verbose {
@@ -59,6 +76,12 @@ func ConvertVideo(inputPath, outputPath, preset string, presetExplicit, verbose 
 		} else {
 			color.Yellow("🔄 Re-encoding with selected codecs")
 		}
+		
+		// Show custom parameters if any are set
+		if customParamsSet {
+			displayCustomParameters(customParams)
+		}
+		
 		fmt.Printf("Command: %s\n\n", strings.Join(cmd.Args, " "))
 	}
 	
@@ -82,6 +105,49 @@ func getFormatFromPath(path string) string {
 	return ""
 }
 
+// selectCodecsWithCustomParams implements codec selection logic with custom parameter support
+func selectCodecsWithCustomParams(inputInfo *analyzer.MediaInfo, outputFormat, preset string, presetExplicit, customParamsSet bool, customParams CustomParameters, verbose bool) (string, string, bool) {
+	// If custom codecs are specified, use them directly
+	if customParams.VideoCodec != "" && customParams.AudioCodec != "" {
+		if verbose {
+			color.Green("🎯 Using custom codecs specified by user")
+			fmt.Printf("Video codec: %s\n", customParams.VideoCodec)
+			fmt.Printf("Audio codec: %s\n", customParams.AudioCodec)
+		}
+		return customParams.VideoCodec, customParams.AudioCodec, false
+	}
+	
+	// If any custom parameter is set, disable stream copy optimization
+	if customParamsSet {
+		videoCodec := customParams.VideoCodec
+		audioCodec := customParams.AudioCodec
+		
+		// Use default codecs if not specified
+		if videoCodec == "" {
+			defaultVideo, _ := getDefaultCodecs(outputFormat)
+			videoCodec = defaultVideo
+		}
+		if audioCodec == "" {
+			_, defaultAudio := getDefaultCodecs(outputFormat)
+			audioCodec = defaultAudio
+		}
+		
+		// Apply quality presets
+		videoCodec = applyVideoPreset(videoCodec, preset)
+		audioCodec = applyAudioPreset(audioCodec, preset)
+		
+		if verbose {
+			color.Yellow("⚙️  Using custom parameters (stream copy disabled)")
+			fmt.Printf("Video codec: %s\n", videoCodec)
+			fmt.Printf("Audio codec: %s\n", audioCodec)
+		}
+		
+		return videoCodec, audioCodec, false
+	}
+	
+	// Fall back to original logic for automatic selection
+	return selectCodecs(inputInfo, outputFormat, preset, presetExplicit, verbose)
+}
 // selectCodecs implements automatic codec selection logic
 func selectCodecs(inputInfo *analyzer.MediaInfo, outputFormat, preset string, presetExplicit, verbose bool) (string, string, bool) {
 	// Get default codecs for the output format
@@ -108,6 +174,30 @@ func selectCodecs(inputInfo *analyzer.MediaInfo, outputFormat, preset string, pr
 	}
 	
 	return videoCodec, audioCodec, false
+}
+
+// displayCustomParameters shows the custom parameters being used
+func displayCustomParameters(params CustomParameters) {
+	color.Cyan("🔧 Custom Parameters:")
+	if params.VideoCodec != "" {
+		fmt.Printf("   Video Codec: %s\n", params.VideoCodec)
+	}
+	if params.AudioCodec != "" {
+		fmt.Printf("   Audio Codec: %s\n", params.AudioCodec)
+	}
+	if params.VideoBitrate != "" {
+		fmt.Printf("   Video Bitrate: %s\n", params.VideoBitrate)
+	}
+	if params.AudioBitrate != "" {
+		fmt.Printf("   Audio Bitrate: %s\n", params.AudioBitrate)
+	}
+	if params.Resolution != "" {
+		fmt.Printf("   Resolution: %s\n", params.Resolution)
+	}
+	if params.Framerate != "" {
+		fmt.Printf("   Frame Rate: %s fps\n", params.Framerate)
+	}
+	fmt.Println()
 }
 
 // getDefaultCodecs returns the best default codecs for each format
@@ -223,8 +313,8 @@ func applyAudioPreset(baseCodec, preset string) string {
 	return baseCodec
 }
 
-// buildFFmpegCommand constructs the FFmpeg command with all parameters
-func buildFFmpegCommand(input, output, videoCodec, audioCodec, preset string, verbose bool) *exec.Cmd {
+// buildFFmpegCommandWithCustomParams constructs the FFmpeg command with custom parameters
+func buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, preset string, customParams CustomParameters, verbose bool) *exec.Cmd {
 	args := []string{
 		"ffmpeg",
 		"-i", input,
@@ -234,10 +324,16 @@ func buildFFmpegCommand(input, output, videoCodec, audioCodec, preset string, ve
 	if videoCodec == "copy" {
 		args = append(args, "-c:v", "copy")
 	} else {
+		// Use custom video codec or apply preset to default codec
 		codecParts := strings.Fields(videoCodec)
 		args = append(args, "-c:v", codecParts[0])
 		if len(codecParts) > 1 {
 			args = append(args, codecParts[1:]...)
+		}
+		
+		// Add custom video bitrate if specified
+		if customParams.VideoBitrate != "" {
+			args = append(args, "-b:v", customParams.VideoBitrate)
 		}
 	}
 	
@@ -245,17 +341,38 @@ func buildFFmpegCommand(input, output, videoCodec, audioCodec, preset string, ve
 	if audioCodec == "copy" {
 		args = append(args, "-c:a", "copy")
 	} else {
+		// Use custom audio codec or apply preset to default codec
 		codecParts := strings.Fields(audioCodec)
 		args = append(args, "-c:a", codecParts[0])
-		if len(codecParts) > 1 {
+		
+		// Add custom audio bitrate if specified, otherwise use preset bitrate
+		if customParams.AudioBitrate != "" {
+			args = append(args, "-b:a", customParams.AudioBitrate)
+		} else if len(codecParts) > 1 {
+			// Use preset bitrate settings
 			args = append(args, codecParts[1:]...)
 		}
+	}
+	
+	// Add resolution scaling if specified
+	if customParams.Resolution != "" {
+		args = append(args, "-s", customParams.Resolution)
+	}
+	
+	// Add framerate if specified
+	if customParams.Framerate != "" {
+		args = append(args, "-r", customParams.Framerate)
 	}
 	
 	// Add output file
 	args = append(args, "-y", output) // -y to overwrite without asking
 	
 	return exec.Command(args[0], args[1:]...)
+}
+// buildFFmpegCommand constructs the FFmpeg command with all parameters (legacy function)
+func buildFFmpegCommand(input, output, videoCodec, audioCodec, preset string, verbose bool) *exec.Cmd {
+	emptyParams := CustomParameters{}
+	return buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, preset, emptyParams, verbose)
 }
 
 // executeFFmpeg runs the FFmpeg command and handles output
