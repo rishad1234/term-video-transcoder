@@ -34,6 +34,18 @@ type CustomParameters struct {
 	Framerate    string // User-specified framerate (e.g., "30", "24")
 }
 
+// AudioExtractionParams holds parameters for audio extraction
+type AudioExtractionParams struct {
+	InputFile   string // Input video file path
+	OutputFile  string // Output audio file path
+	Quality     string // Quality preset (low, medium, high)
+	Bitrate     string // Custom bitrate (e.g., "320k", "192k")
+	Codec       string // Custom codec (e.g., "libmp3lame", "aac")
+	SampleRate  string // Custom sample rate (e.g., "44100", "48000")
+	Channels    string // Number of channels (e.g., "1", "2", "6")
+	Verbose     bool   // Verbose output
+}
+
 // ConvertVideo converts a video file from one format to another (legacy function)
 func ConvertVideo(inputPath, outputPath, preset string, presetExplicit, verbose bool) error {
 	// Call the new function with empty custom parameters
@@ -490,5 +502,220 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
 	} else {
 		return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+}
+
+// ExtractAudio extracts audio from a video file with specified parameters
+func ExtractAudio(params AudioExtractionParams) error {
+	// Step 1: Validate input file
+	if err := validateInputFile(params.InputFile); err != nil {
+		return err
+	}
+
+	// Step 2: Analyze input media to get audio info
+	if params.Verbose {
+		color.Cyan("🔍 Analyzing input media...")
+	}
+
+	mediaInfo, err := analyzer.AnalyzeMedia(params.InputFile)
+	if err != nil {
+		return fmt.Errorf("failed to analyze input media: %w", err)
+	}
+
+	// Check if input has audio streams
+	if len(mediaInfo.AudioStreams) == 0 {
+		return fmt.Errorf("no audio streams found in input file: %s", params.InputFile)
+	}
+
+	// Step 3: Determine output format and codec
+	outputExt := strings.ToLower(filepath.Ext(params.OutputFile))
+	codec, err := selectAudioCodec(outputExt, params.Codec)
+	if err != nil {
+		return err
+	}
+
+	// Step 4: Build FFmpeg command
+	command := buildAudioExtractionCommand(params, codec, mediaInfo)
+
+	if params.Verbose {
+		fmt.Printf("🎵 Extracting audio to %s format\n", strings.TrimPrefix(outputExt, "."))
+		fmt.Printf("🔧 Using codec: %s\n", codec)
+		if params.Bitrate != "" || hasQualityBitrate(params.Quality) {
+			bitrate := params.Bitrate
+			if bitrate == "" {
+				bitrate = getQualityBitrate(params.Quality)
+			}
+			fmt.Printf("📊 Bitrate: %s\n", bitrate)
+		}
+		fmt.Printf("Command: %s\n", strings.Join(command, " "))
+		fmt.Println()
+	}
+
+	// Step 5: Execute FFmpeg command
+	if params.Verbose {
+		color.Green("🚀 Starting audio extraction...")
+	}
+
+	cmd := exec.Command(command[0], command[1:]...)
+	
+	if params.Verbose {
+		// For verbose mode, show real-time progress
+		return executeFFmpegWithProgress(cmd, mediaInfo)
+	} else {
+		// For quiet mode, just run and wait
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("audio extraction failed: %w\nOutput: %s", err, string(output))
+		}
+	}
+
+	if params.Verbose {
+		color.Green("✅ Audio extraction completed successfully!")
+		fmt.Printf("Output saved to: %s\n", params.OutputFile)
+	}
+
+	return nil
+}
+
+// selectAudioCodec determines the appropriate audio codec for the output format
+func selectAudioCodec(outputExt, customCodec string) (string, error) {
+	// If user specified a codec, use it
+	if customCodec != "" {
+		return customCodec, nil
+	}
+
+	// Auto-select codec based on output format
+	switch outputExt {
+	case ".mp3":
+		return "libmp3lame", nil
+	case ".aac", ".m4a":
+		return "aac", nil
+	case ".wav":
+		return "pcm_s16le", nil
+	case ".flac":
+		return "flac", nil
+	case ".ogg":
+		return "libvorbis", nil
+	default:
+		return "", fmt.Errorf("unsupported output format: %s", outputExt)
+	}
+}
+
+// buildAudioExtractionCommand builds the FFmpeg command for audio extraction
+func buildAudioExtractionCommand(params AudioExtractionParams, codec string, mediaInfo *analyzer.MediaInfo) []string {
+	command := []string{"ffmpeg", "-i", params.InputFile}
+
+	// Disable video stream
+	command = append(command, "-vn")
+
+	// Set audio codec
+	command = append(command, "-c:a", codec)
+
+	// Set bitrate (custom or from quality preset)
+	if params.Bitrate != "" {
+		command = append(command, "-b:a", params.Bitrate)
+	} else {
+		// Apply quality preset bitrates
+		bitrate := getQualityBitrate(params.Quality)
+		if bitrate != "" {
+			command = append(command, "-b:a", bitrate)
+		}
+	}
+
+	// Set sample rate if specified
+	if params.SampleRate != "" {
+		command = append(command, "-ar", params.SampleRate)
+	}
+
+	// Set channels if specified
+	if params.Channels != "" {
+		command = append(command, "-ac", params.Channels)
+	}
+
+	// Set additional codec-specific options
+	switch codec {
+	case "libmp3lame":
+		// For MP3, use VBR if no bitrate specified
+		if params.Bitrate == "" && !hasQualityBitrate(params.Quality) {
+			qualityValue := getMP3Quality(params.Quality)
+			command = append(command, "-q:a", qualityValue)
+		}
+	case "flac":
+		// For FLAC, set compression level
+		compressionLevel := getFLACCompression(params.Quality)
+		command = append(command, "-compression_level", compressionLevel)
+	case "libvorbis":
+		// For Vorbis, use quality-based encoding if no bitrate
+		if params.Bitrate == "" && !hasQualityBitrate(params.Quality) {
+			qualityValue := getVorbisQuality(params.Quality)
+			command = append(command, "-q:a", qualityValue)
+		}
+	}
+
+	// Output file (overwrite without asking)
+	command = append(command, "-y", params.OutputFile)
+
+	return command
+}
+
+// getQualityBitrate returns the bitrate for a quality preset
+func getQualityBitrate(quality string) string {
+	switch strings.ToLower(quality) {
+	case "low":
+		return "128k"
+	case "medium":
+		return "192k"
+	case "high":
+		return "320k"
+	default:
+		return "192k"
+	}
+}
+
+// hasQualityBitrate checks if a quality preset should use bitrate-based encoding
+func hasQualityBitrate(quality string) bool {
+	// For some codecs, we prefer quality-based encoding over bitrate
+	return true
+}
+
+// getMP3Quality returns the VBR quality setting for MP3
+func getMP3Quality(quality string) string {
+	switch strings.ToLower(quality) {
+	case "low":
+		return "5"    // ~130 kbps
+	case "medium":
+		return "2"    // ~190 kbps
+	case "high":
+		return "0"    // ~245 kbps
+	default:
+		return "2"
+	}
+}
+
+// getFLACCompression returns the compression level for FLAC
+func getFLACCompression(quality string) string {
+	switch strings.ToLower(quality) {
+	case "low":
+		return "0"    // Fastest compression
+	case "medium":
+		return "5"    // Balanced
+	case "high":
+		return "8"    // Best compression
+	default:
+		return "5"
+	}
+}
+
+// getVorbisQuality returns the VBR quality setting for Vorbis
+func getVorbisQuality(quality string) string {
+	switch strings.ToLower(quality) {
+	case "low":
+		return "3"    // ~112 kbps
+	case "medium":
+		return "6"    // ~192 kbps  
+	case "high":
+		return "9"    // ~320 kbps
+	default:
+		return "6"
 	}
 }
