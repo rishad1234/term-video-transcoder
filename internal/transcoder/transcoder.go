@@ -27,7 +27,7 @@ var SupportedFormats = map[string]bool{
 // CustomParameters holds user-specified custom encoding parameters
 type CustomParameters struct {
 	VideoCodec   string // User-specified video codec
-	AudioCodec   string // User-specified audio codec  
+	AudioCodec   string // User-specified audio codec
 	VideoBitrate string // User-specified video bitrate (e.g., "2M", "1500k")
 	AudioBitrate string // User-specified audio bitrate (e.g., "192k", "128k")
 	Resolution   string // User-specified resolution (e.g., "1920x1080")
@@ -36,14 +36,14 @@ type CustomParameters struct {
 
 // AudioExtractionParams holds parameters for audio extraction
 type AudioExtractionParams struct {
-	InputFile   string // Input video file path
-	OutputFile  string // Output audio file path
-	Quality     string // Quality preset (low, medium, high)
-	Bitrate     string // Custom bitrate (e.g., "320k", "192k")
-	Codec       string // Custom codec (e.g., "libmp3lame", "aac")
-	SampleRate  string // Custom sample rate (e.g., "44100", "48000")
-	Channels    string // Number of channels (e.g., "1", "2", "6")
-	Verbose     bool   // Verbose output
+	InputFile  string // Input video file path
+	OutputFile string // Output audio file path
+	Quality    string // Quality preset (low, medium, high)
+	Bitrate    string // Custom bitrate (e.g., "320k", "192k")
+	Codec      string // Custom codec (e.g., "libmp3lame", "aac")
+	SampleRate string // Custom sample rate (e.g., "44100", "48000")
+	Channels   string // Number of channels (e.g., "1", "2", "6")
+	Verbose    bool   // Verbose output
 }
 
 // ConvertVideo converts a video file from one format to another (legacy function)
@@ -59,13 +59,13 @@ func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetEx
 	if err := validateInputFile(inputPath); err != nil {
 		return err
 	}
-	
+
 	// Step 2: Validate output format
 	outputFormat := getFormatFromPath(outputPath)
 	if !SupportedFormats[outputFormat] {
 		return fmt.Errorf("unsupported output format: %s", outputFormat)
 	}
-	
+
 	// Step 3: Analyze input media
 	if verbose {
 		color.Blue("🔍 Analyzing input media...")
@@ -74,13 +74,13 @@ func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetEx
 	if err != nil {
 		return fmt.Errorf("failed to analyze input: %w", err)
 	}
-	
+
 	// Step 4: Select optimal codecs (considering custom parameters)
 	videoCodec, audioCodec, canCopy := selectCodecsWithCustomParams(inputInfo, outputFormat, preset, presetExplicit, customParamsSet, customParams, verbose)
-	
+
 	// Step 5: Build FFmpeg command (with custom parameters)
 	cmd := buildFFmpegCommandWithCustomParams(inputPath, outputPath, videoCodec, audioCodec, preset, customParams, verbose)
-	
+
 	// Step 6: Execute conversion
 	if verbose {
 		if canCopy {
@@ -88,15 +88,15 @@ func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetEx
 		} else {
 			color.Yellow("🔄 Re-encoding with selected codecs")
 		}
-		
+
 		// Show custom parameters if any are set
 		if customParamsSet {
 			displayCustomParameters(customParams)
 		}
-		
+
 		fmt.Printf("Command: %s\n\n", strings.Join(cmd.Args, " "))
 	}
-	
+
 	return executeFFmpeg(cmd, inputInfo, verbose)
 }
 
@@ -128,12 +128,12 @@ func selectCodecsWithCustomParams(inputInfo *analyzer.MediaInfo, outputFormat, p
 		}
 		return customParams.VideoCodec, customParams.AudioCodec, false
 	}
-	
+
 	// If any custom parameter is set, disable stream copy optimization
 	if customParamsSet {
 		videoCodec := customParams.VideoCodec
 		audioCodec := customParams.AudioCodec
-		
+
 		// Use default codecs if not specified
 		if videoCodec == "" {
 			defaultVideo, _ := getDefaultCodecs(outputFormat)
@@ -143,28 +143,29 @@ func selectCodecsWithCustomParams(inputInfo *analyzer.MediaInfo, outputFormat, p
 			_, defaultAudio := getDefaultCodecs(outputFormat)
 			audioCodec = defaultAudio
 		}
-		
+
 		// Apply quality presets
 		videoCodec = applyVideoPreset(videoCodec, preset)
 		audioCodec = applyAudioPreset(audioCodec, preset)
-		
+
 		if verbose {
 			color.Yellow("⚙️  Using custom parameters (stream copy disabled)")
 			fmt.Printf("Video codec: %s\n", videoCodec)
 			fmt.Printf("Audio codec: %s\n", audioCodec)
 		}
-		
+
 		return videoCodec, audioCodec, false
 	}
-	
+
 	// Fall back to original logic for automatic selection
 	return selectCodecs(inputInfo, outputFormat, preset, presetExplicit, verbose)
 }
+
 // selectCodecs implements automatic codec selection logic
 func selectCodecs(inputInfo *analyzer.MediaInfo, outputFormat, preset string, presetExplicit, verbose bool) (string, string, bool) {
 	// Get default codecs for the output format
 	defaultVideoCodec, defaultAudioCodec := getDefaultCodecs(outputFormat)
-	
+
 	// Check if we can use stream copy (no re-encoding)
 	// Use stream copy only if:
 	// 1. Formats are compatible, AND
@@ -175,16 +176,16 @@ func selectCodecs(inputInfo *analyzer.MediaInfo, outputFormat, preset string, pr
 		}
 		return "copy", "copy", true
 	}
-	
+
 	// Apply quality preset to codecs
 	videoCodec := applyVideoPreset(defaultVideoCodec, preset)
 	audioCodec := applyAudioPreset(defaultAudioCodec, preset)
-	
+
 	if verbose {
 		fmt.Printf("Selected video codec: %s\n", videoCodec)
 		fmt.Printf("Selected audio codec: %s\n", audioCodec)
 	}
-	
+
 	return videoCodec, audioCodec, false
 }
 
@@ -233,26 +234,26 @@ func canUseStreamCopy(inputInfo *analyzer.MediaInfo, outputFormat string) bool {
 	if len(inputInfo.VideoStreams) == 0 || len(inputInfo.AudioStreams) == 0 {
 		return false
 	}
-	
+
 	videoCodec := inputInfo.VideoStreams[0].Codec
 	audioCodec := inputInfo.AudioStreams[0].Codec
-	
+
 	// Check codec compatibility with output format
 	switch outputFormat {
 	case "mp4", "mov":
 		return isCompatibleCodec(videoCodec, []string{"h264", "hevc"}) &&
-			   isCompatibleCodec(audioCodec, []string{"aac", "mp3"})
+			isCompatibleCodec(audioCodec, []string{"aac", "mp3"})
 	case "webm":
 		return isCompatibleCodec(videoCodec, []string{"vp8", "vp9", "av1"}) &&
-			   isCompatibleCodec(audioCodec, []string{"vorbis", "opus"})
+			isCompatibleCodec(audioCodec, []string{"vorbis", "opus"})
 	case "mkv":
 		// MKV is very flexible, most codecs work
 		return true
 	case "avi":
 		return isCompatibleCodec(videoCodec, []string{"h264", "xvid", "divx"}) &&
-			   isCompatibleCodec(audioCodec, []string{"mp3", "ac3"})
+			isCompatibleCodec(audioCodec, []string{"mp3", "ac3"})
 	}
-	
+
 	return false
 }
 
@@ -331,7 +332,7 @@ func buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, p
 		"ffmpeg",
 		"-i", input,
 	}
-	
+
 	// Add video codec parameters
 	if videoCodec == "copy" {
 		args = append(args, "-c:v", "copy")
@@ -342,13 +343,13 @@ func buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, p
 		if len(codecParts) > 1 {
 			args = append(args, codecParts[1:]...)
 		}
-		
+
 		// Add custom video bitrate if specified
 		if customParams.VideoBitrate != "" {
 			args = append(args, "-b:v", customParams.VideoBitrate)
 		}
 	}
-	
+
 	// Add audio codec parameters
 	if audioCodec == "copy" {
 		args = append(args, "-c:a", "copy")
@@ -356,7 +357,7 @@ func buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, p
 		// Use custom audio codec or apply preset to default codec
 		codecParts := strings.Fields(audioCodec)
 		args = append(args, "-c:a", codecParts[0])
-		
+
 		// Add custom audio bitrate if specified, otherwise use preset bitrate
 		if customParams.AudioBitrate != "" {
 			args = append(args, "-b:a", customParams.AudioBitrate)
@@ -365,22 +366,23 @@ func buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, p
 			args = append(args, codecParts[1:]...)
 		}
 	}
-	
+
 	// Add resolution scaling if specified
 	if customParams.Resolution != "" {
 		args = append(args, "-s", customParams.Resolution)
 	}
-	
+
 	// Add framerate if specified
 	if customParams.Framerate != "" {
 		args = append(args, "-r", customParams.Framerate)
 	}
-	
+
 	// Add output file
 	args = append(args, "-y", output) // -y to overwrite without asking
-	
+
 	return exec.Command(args[0], args[1:]...)
 }
+
 // buildFFmpegCommand constructs the FFmpeg command with all parameters (legacy function)
 func buildFFmpegCommand(input, output, videoCodec, audioCodec, preset string, verbose bool) *exec.Cmd {
 	emptyParams := CustomParameters{}
@@ -404,19 +406,19 @@ func executeFFmpeg(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo, verbose bool) e
 // executeFFmpegWithProgress runs FFmpeg and displays a progress indicator
 func executeFFmpegWithProgress(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo) error {
 	color.Blue("🚀 Starting FFmpeg conversion...")
-	
+
 	// Show initial progress
 	totalSeconds := inputInfo.Duration.Seconds()
 	fmt.Printf("⏳ Processing %.1fs video...\n", totalSeconds)
 
 	// Add progress reporting to stderr using -stats_period
 	newArgs := make([]string, 0, len(cmd.Args)+2)
-	newArgs = append(newArgs, cmd.Args[0])              // ffmpeg
-	newArgs = append(newArgs, "-stats_period", "0.2")  // Update stats every 0.2 seconds
-	newArgs = append(newArgs, cmd.Args[1:]...)          // Rest of arguments
+	newArgs = append(newArgs, cmd.Args[0])            // ffmpeg
+	newArgs = append(newArgs, "-stats_period", "0.2") // Update stats every 0.2 seconds
+	newArgs = append(newArgs, cmd.Args[1:]...)        // Rest of arguments
 	cmd.Args = newArgs
 
-	// Create pipes for stderr (stats) 
+	// Create pipes for stderr (stats)
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create stderr pipe: %w", err)
@@ -438,41 +440,41 @@ func executeFFmpegWithProgress(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo) err
 		scanner := bufio.NewScanner(stderrPipe)
 		timeRegex := regexp.MustCompile(`time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})`)
 		speedRegex := regexp.MustCompile(`speed=\s*([0-9.]+)x`)
-		
+
 		for scanner.Scan() {
 			line := scanner.Text()
-			
+
 			// Parse time progress
 			if matches := timeRegex.FindStringSubmatch(line); len(matches) > 4 {
 				hours, _ := strconv.Atoi(matches[1])
 				minutes, _ := strconv.Atoi(matches[2])
 				seconds, _ := strconv.Atoi(matches[3])
 				centiseconds, _ := strconv.Atoi(matches[4])
-				
-				currentSeconds := float64(hours*3600 + minutes*60 + seconds) + float64(centiseconds)/100.0
+
+				currentSeconds := float64(hours*3600+minutes*60+seconds) + float64(centiseconds)/100.0
 				progressPercent := (currentSeconds / totalSeconds) * 100
 				if progressPercent > 100 {
 					progressPercent = 100
 				}
-				
+
 				// Parse speed
 				speed := 0.0
 				if speedMatches := speedRegex.FindStringSubmatch(line); len(speedMatches) > 1 {
 					speed, _ = strconv.ParseFloat(speedMatches[1], 64)
 				}
-				
+
 				// Calculate ETA
 				eta := ""
 				if speed > 0 && currentSeconds < totalSeconds {
 					remainingSeconds := (totalSeconds - currentSeconds) / speed
 					eta = fmt.Sprintf(" (ETA: %s)", formatDuration(time.Duration(remainingSeconds)*time.Second))
 				}
-				
+
 				// Display progress bar
 				barWidth := 30
 				filled := int((progressPercent / 100) * float64(barWidth))
 				bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-				
+
 				fmt.Printf("\r📊 [%s] %.1f%% - %.1fx speed%s", bar, progressPercent, speed, eta)
 				progressShown = true
 			}
@@ -481,7 +483,7 @@ func executeFFmpegWithProgress(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo) err
 
 	// Wait for command to complete
 	err = cmd.Wait()
-	
+
 	// Clear the progress line if we showed any
 	if progressShown {
 		fmt.Printf("\r%s\r", strings.Repeat(" ", 100))
@@ -557,7 +559,7 @@ func ExtractAudio(params AudioExtractionParams) error {
 	}
 
 	cmd := exec.Command(command[0], command[1:]...)
-	
+
 	if params.Verbose {
 		// For verbose mode, show real-time progress
 		return executeFFmpegWithProgress(cmd, mediaInfo)
@@ -682,11 +684,11 @@ func hasQualityBitrate(quality string) bool {
 func getMP3Quality(quality string) string {
 	switch strings.ToLower(quality) {
 	case "low":
-		return "5"    // ~130 kbps
+		return "5" // ~130 kbps
 	case "medium":
-		return "2"    // ~190 kbps
+		return "2" // ~190 kbps
 	case "high":
-		return "0"    // ~245 kbps
+		return "0" // ~245 kbps
 	default:
 		return "2"
 	}
@@ -696,11 +698,11 @@ func getMP3Quality(quality string) string {
 func getFLACCompression(quality string) string {
 	switch strings.ToLower(quality) {
 	case "low":
-		return "0"    // Fastest compression
+		return "0" // Fastest compression
 	case "medium":
-		return "5"    // Balanced
+		return "5" // Balanced
 	case "high":
-		return "8"    // Best compression
+		return "8" // Best compression
 	default:
 		return "5"
 	}
@@ -710,11 +712,11 @@ func getFLACCompression(quality string) string {
 func getVorbisQuality(quality string) string {
 	switch strings.ToLower(quality) {
 	case "low":
-		return "3"    // ~112 kbps
+		return "3" // ~112 kbps
 	case "medium":
-		return "6"    // ~192 kbps  
+		return "6" // ~192 kbps
 	case "high":
-		return "9"    // ~320 kbps
+		return "9" // ~320 kbps
 	default:
 		return "6"
 	}

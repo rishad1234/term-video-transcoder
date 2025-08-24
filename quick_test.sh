@@ -95,15 +95,28 @@ echo "3. Testing resolution scaling..."
 time ./transcoder convert internal_test/short_test_video.mp4 quick_test_outputs/resolution_test.mp4 \
   --resolution 640x360
 
+# Quick test 4: Audio extraction
+echo ""
+echo "4. Testing audio extraction..."
+time ./transcoder extract internal_test/short_test_video.mp4 quick_test_outputs/audio_test.mp3 --quality high
+
 echo ""
 echo "📊 Quick Test Results:"
 echo "====================="
 
-for file in quick_test_outputs/*.{mp4,webm}; do
+for file in quick_test_outputs/*.{mp4,webm,mp3}; do
   if [ -f "$file" ]; then
     size=$(du -h "$file" | cut -f1)
     basename=$(basename "$file")
-    echo "📁 $basename: $size"
+    
+    # Show additional info for audio files
+    if [[ "$basename" == *.mp3 ]]; then
+      duration=$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "$file" 2>/dev/null | cut -d. -f1)
+      bitrate=$(ffprobe -v quiet -select_streams a:0 -show_entries stream=bit_rate -of csv=p=0 "$file" 2>/dev/null)
+      echo "📁 $basename: $size (${duration}s, ${bitrate} bps)"
+    else
+      echo "📁 $basename: $size"
+    fi
   fi
 done
 
@@ -111,4 +124,5 @@ echo ""
 echo "✅ Quick tests completed! All features working correctly. 🎉"
 echo ""
 echo "💡 Tip: Use this script for fast development testing."
-echo "    For comprehensive testing, run: ./test_all_features.sh"
+echo "    For audio testing only: ./audio_test.sh"
+echo "    For comprehensive testing: ./test_all_features.sh"
