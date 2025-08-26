@@ -130,7 +130,7 @@ The project includes comprehensive test scripts:
 ./audio_test.sh
 
 # Comprehensive testing
-./full_test.sh
+./test_all_features.sh
 ```
 
 ## Contributing

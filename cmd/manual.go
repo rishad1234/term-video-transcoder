@@ -162,9 +162,10 @@ TESTING & VALIDATION
 ====================
 
 Test Scripts:
-  ./quick_test.sh     Fast testing (video + audio)
-  ./audio_test.sh     Comprehensive audio testing
-  ./full_test.sh      Complete video testing
+  ./quick_test.sh          Fast testing (video + audio)
+  ./audio_test.sh          Comprehensive audio testing  
+  ./test_all_features.sh   Complete video testing
+  ./security_test.sh       Security vulnerability testing
 
 Help Commands:
   transcoder --help
