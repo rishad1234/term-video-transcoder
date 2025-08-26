@@ -13,6 +13,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/rishad1234/term-video-transcoder/internal/analyzer"
+	"github.com/rishad1234/term-video-transcoder/internal/security"
 )
 
 // SupportedFormats defines the formats we can convert between
@@ -23,6 +24,9 @@ var SupportedFormats = map[string]bool{
 	"webm": true,
 	"mov":  true,
 }
+
+// Global security policy for input validation
+var securityPolicy = security.NewDefaultSecurityPolicy()
 
 // CustomParameters holds user-specified custom encoding parameters
 type CustomParameters struct {
@@ -66,7 +70,51 @@ func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetEx
 		return fmt.Errorf("unsupported output format: %s", outputFormat)
 	}
 
-	// Step 3: Analyze input media
+	// Step 3: Security validation for file paths
+	if err := securityPolicy.ValidateFilePath(inputPath); err != nil {
+		return fmt.Errorf("security validation failed for input path: %w", err)
+	}
+
+	if err := securityPolicy.ValidateFilePath(outputPath); err != nil {
+		return fmt.Errorf("security validation failed for output path: %w", err)
+	}
+
+	if err := securityPolicy.ValidateFileFormat(outputPath); err != nil {
+		return fmt.Errorf("security validation failed for output format: %w", err)
+	}
+
+	// Step 4: Security validation for custom parameters
+	if customParamsSet {
+		if customParams.VideoCodec != "" {
+			if err := securityPolicy.ValidateCodec(customParams.VideoCodec, "video"); err != nil {
+				return fmt.Errorf("security validation failed for video codec: %w", err)
+			}
+		}
+
+		if customParams.AudioCodec != "" {
+			if err := securityPolicy.ValidateCodec(customParams.AudioCodec, "audio"); err != nil {
+				return fmt.Errorf("security validation failed for audio codec: %w", err)
+			}
+		}
+
+		if err := securityPolicy.ValidateBitrate(customParams.VideoBitrate); err != nil {
+			return fmt.Errorf("security validation failed for video bitrate: %w", err)
+		}
+
+		if err := securityPolicy.ValidateBitrate(customParams.AudioBitrate); err != nil {
+			return fmt.Errorf("security validation failed for audio bitrate: %w", err)
+		}
+
+		if err := securityPolicy.ValidateResolution(customParams.Resolution); err != nil {
+			return fmt.Errorf("security validation failed for resolution: %w", err)
+		}
+
+		if err := securityPolicy.ValidateFramerate(customParams.Framerate); err != nil {
+			return fmt.Errorf("security validation failed for framerate: %w", err)
+		}
+	}
+
+	// Step 5: Analyze input media
 	if verbose {
 		color.Blue("🔍 Analyzing input media...")
 	}
@@ -75,13 +123,25 @@ func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetEx
 		return fmt.Errorf("failed to analyze input: %w", err)
 	}
 
-	// Step 4: Select optimal codecs (considering custom parameters)
-	videoCodec, audioCodec, canCopy := selectCodecsWithCustomParams(inputInfo, outputFormat, preset, presetExplicit, customParamsSet, customParams, verbose)
+	// Step 6: Select optimal codecs (considering custom parameters and security)
+	videoCodec, audioCodec, canCopy := selectCodecsWithCustomParamsSecure(inputInfo, outputFormat, preset, presetExplicit, customParamsSet, customParams, verbose)
 
-	// Step 5: Build FFmpeg command (with custom parameters)
-	cmd := buildFFmpegCommandWithCustomParams(inputPath, outputPath, videoCodec, audioCodec, preset, customParams, verbose)
+	// Step 7: Apply preset-based bitrates if no custom bitrates specified
+	secureCustomParams := customParams
+	if !customParamsSet || customParams.VideoBitrate == "" {
+		secureCustomParams.VideoBitrate = getPresetVideoBitrate(preset)
+	}
+	if !customParamsSet || customParams.AudioBitrate == "" {
+		secureCustomParams.AudioBitrate = getPresetAudioBitrate(preset)
+	}
 
-	// Step 6: Execute conversion
+	// Step 8: Build FFmpeg command (with security validation)
+	cmd := buildFFmpegCommandWithCustomParams(inputPath, outputPath, videoCodec, audioCodec, preset, secureCustomParams, verbose)
+	if cmd == nil {
+		return fmt.Errorf("failed to build secure FFmpeg command")
+	}
+
+	// Step 9: Execute conversion
 	if verbose {
 		if canCopy {
 			color.Green("⚡ Using stream copy (no re-encoding needed)")
@@ -91,13 +151,86 @@ func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetEx
 
 		// Show custom parameters if any are set
 		if customParamsSet {
-			displayCustomParameters(customParams)
+			displayCustomParameters(secureCustomParams)
 		}
 
 		fmt.Printf("Command: %s\n\n", strings.Join(cmd.Args, " "))
 	}
 
 	return executeFFmpeg(cmd, inputInfo, verbose)
+}
+
+// selectCodecsWithCustomParamsSecure implements secure codec selection logic
+func selectCodecsWithCustomParamsSecure(inputInfo *analyzer.MediaInfo, outputFormat, preset string, presetExplicit, customParamsSet bool, customParams CustomParameters, verbose bool) (string, string, bool) {
+	// If custom codecs are specified, validate and use them
+	if customParams.VideoCodec != "" && customParams.AudioCodec != "" {
+		// Validation is already done in the calling function
+		if verbose {
+			color.Green("🎯 Using custom codecs specified by user")
+			fmt.Printf("Video codec: %s\n", customParams.VideoCodec)
+			fmt.Printf("Audio codec: %s\n", customParams.AudioCodec)
+		}
+		return customParams.VideoCodec, customParams.AudioCodec, false
+	}
+
+	// If any custom parameter is set, disable stream copy optimization
+	if customParamsSet {
+		videoCodec := customParams.VideoCodec
+		audioCodec := customParams.AudioCodec
+
+		// Use default codecs if not specified
+		if videoCodec == "" {
+			defaultVideo, _ := getDefaultCodecs(outputFormat)
+			videoCodec = defaultVideo
+		}
+		if audioCodec == "" {
+			_, defaultAudio := getDefaultCodecs(outputFormat)
+			audioCodec = defaultAudio
+		}
+
+		// Apply quality presets (now returns only codec names)
+		videoCodec = applyVideoPreset(videoCodec, preset)
+		audioCodec = applyAudioPreset(audioCodec, preset)
+
+		if verbose {
+			color.Yellow("⚙️  Using custom parameters (stream copy disabled)")
+			fmt.Printf("Video codec: %s\n", videoCodec)
+			fmt.Printf("Audio codec: %s\n", audioCodec)
+		}
+
+		return videoCodec, audioCodec, false
+	}
+
+	// Fall back to original logic for automatic selection
+	return selectCodecs(inputInfo, outputFormat, preset, presetExplicit, verbose)
+}
+
+// getPresetVideoBitrate returns video bitrate for quality presets
+func getPresetVideoBitrate(preset string) string {
+	switch preset {
+	case "low":
+		return "1M"
+	case "medium":
+		return "2M"
+	case "high":
+		return "4M"
+	default:
+		return "2M"
+	}
+}
+
+// getPresetAudioBitrate returns audio bitrate for quality presets
+func getPresetAudioBitrate(preset string) string {
+	switch preset {
+	case "low":
+		return "128k"
+	case "medium":
+		return "192k"
+	case "high":
+		return "256k"
+	default:
+		return "192k"
+	}
 }
 
 // validateInputFile checks if the input file exists and is readable
@@ -268,112 +401,129 @@ func isCompatibleCodec(codec string, compatibleCodecs []string) bool {
 }
 
 // applyVideoPreset applies quality settings to video codec
+// Returns only the codec name for security - presets are handled via separate parameters
 func applyVideoPreset(baseCodec, preset string) string {
+	// For security, we only return the base codec name
+	// Quality presets are now handled through separate validated parameters
 	switch baseCodec {
-	case "libx264":
-		switch preset {
-		case "low":
-			return "libx264 -preset fast -crf 28"
-		case "medium":
-			return "libx264 -preset medium -crf 23"
-		case "high":
-			return "libx264 -preset slow -crf 18"
-		}
-	case "libvpx-vp9":
-		switch preset {
-		case "low":
-			return "libvpx-vp9 -crf 35 -b:v 0"
-		case "medium":
-			return "libvpx-vp9 -crf 30 -b:v 0"
-		case "high":
-			return "libvpx-vp9 -crf 25 -b:v 0"
-		}
+	case "libx264", "libx265", "libvpx-vp9", "copy":
+		return baseCodec
+	default:
+		// Default to safe codec if unknown
+		return "libx264"
 	}
-	return baseCodec
 }
 
 // applyAudioPreset applies quality settings to audio codec
+// Returns only the codec name for security - presets are handled via separate parameters
 func applyAudioPreset(baseCodec, preset string) string {
+	// For security, we only return the base codec name
+	// Quality presets are now handled through separate validated parameters
 	switch baseCodec {
-	case "aac":
-		switch preset {
-		case "low":
-			return "aac -b:a 128k"
-		case "medium":
-			return "aac -b:a 192k"
-		case "high":
-			return "aac -b:a 256k"
-		}
-	case "libopus":
-		switch preset {
-		case "low":
-			return "libopus -b:a 128k"
-		case "medium":
-			return "libopus -b:a 192k"
-		case "high":
-			return "libopus -b:a 256k"
-		}
-	case "libmp3lame":
-		switch preset {
-		case "low":
-			return "libmp3lame -b:a 128k"
-		case "medium":
-			return "libmp3lame -b:a 192k"
-		case "high":
-			return "libmp3lame -b:a 256k"
-		}
+	case "aac", "libopus", "libmp3lame", "libvorbis", "flac", "copy":
+		return baseCodec
+	default:
+		// Default to safe codec if unknown
+		return "aac"
 	}
-	return baseCodec
 }
 
 // buildFFmpegCommandWithCustomParams constructs the FFmpeg command with custom parameters
+// This function now includes security validation to prevent command injection
 func buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, preset string, customParams CustomParameters, verbose bool) *exec.Cmd {
+	// Security validation for all parameters
+	if err := securityPolicy.ValidateFilePath(input); err != nil {
+		if verbose {
+			color.Red("Security validation failed for input path: %v", err)
+		}
+		return nil
+	}
+
+	if err := securityPolicy.ValidateFilePath(output); err != nil {
+		if verbose {
+			color.Red("Security validation failed for output path: %v", err)
+		}
+		return nil
+	}
+
 	args := []string{
 		"ffmpeg",
 		"-i", input,
 	}
 
-	// Add video codec parameters
+	// Add video codec parameters with security validation
 	if videoCodec == "copy" {
 		args = append(args, "-c:v", "copy")
 	} else {
-		// Use custom video codec or apply preset to default codec
-		codecParts := strings.Fields(videoCodec)
-		args = append(args, "-c:v", codecParts[0])
-		if len(codecParts) > 1 {
-			args = append(args, codecParts[1:]...)
+		// Validate video codec - prevent command injection
+		if err := securityPolicy.ValidateCodec(videoCodec, "video"); err != nil {
+			if verbose {
+				color.Red("Security validation failed for video codec: %v", err)
+			}
+			return nil
 		}
 
-		// Add custom video bitrate if specified
+		// Only use the validated codec name - no additional parameters
+		args = append(args, "-c:v", videoCodec)
+
+		// Add custom video bitrate if specified and validated
 		if customParams.VideoBitrate != "" {
+			if err := securityPolicy.ValidateBitrate(customParams.VideoBitrate); err != nil {
+				if verbose {
+					color.Red("Security validation failed for video bitrate: %v", err)
+				}
+				return nil
+			}
 			args = append(args, "-b:v", customParams.VideoBitrate)
 		}
 	}
 
-	// Add audio codec parameters
+	// Add audio codec parameters with security validation
 	if audioCodec == "copy" {
 		args = append(args, "-c:a", "copy")
 	} else {
-		// Use custom audio codec or apply preset to default codec
-		codecParts := strings.Fields(audioCodec)
-		args = append(args, "-c:a", codecParts[0])
+		// Validate audio codec - prevent command injection
+		if err := securityPolicy.ValidateCodec(audioCodec, "audio"); err != nil {
+			if verbose {
+				color.Red("Security validation failed for audio codec: %v", err)
+			}
+			return nil
+		}
 
-		// Add custom audio bitrate if specified, otherwise use preset bitrate
+		// Only use the validated codec name - no additional parameters
+		args = append(args, "-c:a", audioCodec)
+
+		// Add custom audio bitrate if specified and validated
 		if customParams.AudioBitrate != "" {
+			if err := securityPolicy.ValidateBitrate(customParams.AudioBitrate); err != nil {
+				if verbose {
+					color.Red("Security validation failed for audio bitrate: %v", err)
+				}
+				return nil
+			}
 			args = append(args, "-b:a", customParams.AudioBitrate)
-		} else if len(codecParts) > 1 {
-			// Use preset bitrate settings
-			args = append(args, codecParts[1:]...)
 		}
 	}
 
-	// Add resolution scaling if specified
+	// Add resolution scaling if specified and validated
 	if customParams.Resolution != "" {
+		if err := securityPolicy.ValidateResolution(customParams.Resolution); err != nil {
+			if verbose {
+				color.Red("Security validation failed for resolution: %v", err)
+			}
+			return nil
+		}
 		args = append(args, "-s", customParams.Resolution)
 	}
 
-	// Add framerate if specified
+	// Add framerate if specified and validated
 	if customParams.Framerate != "" {
+		if err := securityPolicy.ValidateFramerate(customParams.Framerate); err != nil {
+			if verbose {
+				color.Red("Security validation failed for framerate: %v", err)
+			}
+			return nil
+		}
 		args = append(args, "-r", customParams.Framerate)
 	}
 
@@ -514,7 +664,44 @@ func ExtractAudio(params AudioExtractionParams) error {
 		return err
 	}
 
-	// Step 2: Analyze input media to get audio info
+	// Step 2: Security validation for file paths
+	if err := securityPolicy.ValidateFilePath(params.InputFile); err != nil {
+		return fmt.Errorf("security validation failed for input path: %w", err)
+	}
+
+	if err := securityPolicy.ValidateFilePath(params.OutputFile); err != nil {
+		return fmt.Errorf("security validation failed for output path: %w", err)
+	}
+
+	if err := securityPolicy.ValidateFileFormat(params.OutputFile); err != nil {
+		return fmt.Errorf("security validation failed for output format: %w", err)
+	}
+
+	// Step 3: Security validation for audio parameters
+	if params.Codec != "" {
+		if err := securityPolicy.ValidateCodec(params.Codec, "audio"); err != nil {
+			return fmt.Errorf("security validation failed for audio codec: %w", err)
+		}
+	}
+
+	if err := securityPolicy.ValidateBitrate(params.Bitrate); err != nil {
+		return fmt.Errorf("security validation failed for bitrate: %w", err)
+	}
+
+	// Validate other audio parameters
+	if params.SampleRate != "" {
+		if err := validateSampleRate(params.SampleRate); err != nil {
+			return fmt.Errorf("invalid sample rate: %w", err)
+		}
+	}
+
+	if params.Channels != "" {
+		if err := validateChannels(params.Channels); err != nil {
+			return fmt.Errorf("invalid channels: %w", err)
+		}
+	}
+
+	// Step 4: Analyze input media to get audio info
 	if params.Verbose {
 		color.Cyan("🔍 Analyzing input media...")
 	}
@@ -529,15 +716,18 @@ func ExtractAudio(params AudioExtractionParams) error {
 		return fmt.Errorf("no audio streams found in input file: %s", params.InputFile)
 	}
 
-	// Step 3: Determine output format and codec
+	// Step 5: Determine output format and codec
 	outputExt := strings.ToLower(filepath.Ext(params.OutputFile))
 	codec, err := selectAudioCodec(outputExt, params.Codec)
 	if err != nil {
 		return err
 	}
 
-	// Step 4: Build FFmpeg command
-	command := buildAudioExtractionCommand(params, codec, mediaInfo)
+	// Step 6: Build FFmpeg command with security validation
+	command := buildAudioExtractionCommandSecure(params, codec, mediaInfo)
+	if command == nil {
+		return fmt.Errorf("failed to build secure audio extraction command")
+	}
 
 	if params.Verbose {
 		fmt.Printf("🎵 Extracting audio to %s format\n", strings.TrimPrefix(outputExt, "."))
@@ -553,7 +743,7 @@ func ExtractAudio(params AudioExtractionParams) error {
 		fmt.Println()
 	}
 
-	// Step 5: Execute FFmpeg command
+	// Step 7: Execute FFmpeg command
 	if params.Verbose {
 		color.Green("🚀 Starting audio extraction...")
 	}
@@ -720,4 +910,108 @@ func getVorbisQuality(quality string) string {
 	default:
 		return "6"
 	}
+}
+
+// validateSampleRate validates audio sample rate parameters
+func validateSampleRate(sampleRate string) error {
+	if sampleRate == "" {
+		return nil
+	}
+
+	// Check for dangerous characters
+	if strings.ContainsAny(sampleRate, ";|&`$<>\"'") {
+		return fmt.Errorf("sample rate contains invalid characters: %s", sampleRate)
+	}
+
+	// Validate sample rate format
+	validSampleRates := map[string]bool{
+		"8000": true, "11025": true, "16000": true, "22050": true,
+		"44100": true, "48000": true, "88200": true, "96000": true,
+	}
+
+	if !validSampleRates[sampleRate] {
+		return fmt.Errorf("invalid sample rate: %s (valid: 8000, 11025, 16000, 22050, 44100, 48000, 88200, 96000)", sampleRate)
+	}
+
+	return nil
+}
+
+// validateChannels validates audio channel parameters
+func validateChannels(channels string) error {
+	if channels == "" {
+		return nil
+	}
+
+	// Check for dangerous characters
+	if strings.ContainsAny(channels, ";|&`$<>\"'") {
+		return fmt.Errorf("channels contains invalid characters: %s", channels)
+	}
+
+	// Validate channel count
+	validChannels := map[string]bool{
+		"1": true, "2": true, "6": true, "8": true,
+	}
+
+	if !validChannels[channels] {
+		return fmt.Errorf("invalid channel count: %s (valid: 1=mono, 2=stereo, 6=5.1, 8=7.1)", channels)
+	}
+
+	return nil
+}
+
+// buildAudioExtractionCommandSecure builds the FFmpeg command for audio extraction with security validation
+func buildAudioExtractionCommandSecure(params AudioExtractionParams, codec string, mediaInfo *analyzer.MediaInfo) []string {
+	command := []string{"ffmpeg", "-i", params.InputFile}
+
+	// Disable video stream
+	command = append(command, "-vn")
+
+	// Set audio codec (already validated)
+	command = append(command, "-c:a", codec)
+
+	// Set bitrate (custom or from quality preset) - already validated
+	if params.Bitrate != "" {
+		command = append(command, "-b:a", params.Bitrate)
+	} else {
+		// Apply quality preset bitrates
+		bitrate := getQualityBitrate(params.Quality)
+		if bitrate != "" {
+			command = append(command, "-b:a", bitrate)
+		}
+	}
+
+	// Set sample rate if specified (already validated)
+	if params.SampleRate != "" {
+		command = append(command, "-ar", params.SampleRate)
+	}
+
+	// Set channels if specified (already validated)
+	if params.Channels != "" {
+		command = append(command, "-ac", params.Channels)
+	}
+
+	// Set additional codec-specific options (safe, predefined values only)
+	switch codec {
+	case "libmp3lame":
+		// For MP3, use VBR if no bitrate specified
+		if params.Bitrate == "" && !hasQualityBitrate(params.Quality) {
+			qualityValue := getMP3Quality(params.Quality)
+			command = append(command, "-q:a", qualityValue)
+		}
+	case "flac":
+		// For FLAC, set compression level
+		compressionLevel := getFLACCompression(params.Quality)
+		command = append(command, "-compression_level", compressionLevel)
+	case "libvorbis":
+		// For Vorbis, use quality-based encoding if no bitrate
+		if params.Bitrate == "" && !hasQualityBitrate(params.Quality) {
+			qualityValue := getVorbisQuality(params.Quality)
+			command = append(command, "-q:a", qualityValue)
+		}
+	}
+
+	// Output file (overwrite without asking) - already validated
+	command = append(command, "-y", params.OutputFile)
+
+	return command
 }

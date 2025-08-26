@@ -11,6 +11,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/rishad1234/term-video-transcoder/internal/analyzer"
+	"github.com/rishad1234/term-video-transcoder/internal/security"
 	"github.com/spf13/cobra"
 )
 
@@ -39,6 +40,14 @@ func init() {
 }
 
 func runInfo(filepath string) error {
+	// Initialize security policy
+	securityPolicy := security.NewDefaultSecurityPolicy()
+
+	// Security validation for file path
+	if err := securityPolicy.ValidateFilePath(filepath); err != nil {
+		return fmt.Errorf("security validation failed for file path: %w", err)
+	}
+
 	// Check if ffprobe is available
 	if err := analyzer.CheckFFProbe(); err != nil {
 		return fmt.Errorf("ffprobe check failed: %w", err)
@@ -53,7 +62,7 @@ func runInfo(filepath string) error {
 	// Determine output destination
 	var writer io.Writer = os.Stdout
 	var outputFile *os.File
-	
+
 	if output != "" {
 		outputFile, err = os.Create(output)
 		if err != nil {
@@ -68,18 +77,18 @@ func runInfo(filepath string) error {
 
 	// Display the information with verbosity consideration
 	displayMediaInfo(info, useVerbose, writer)
-	
+
 	if output != "" && !quiet {
 		fmt.Printf("Media information saved to: %s\n", output)
 	}
-	
+
 	return nil
 }
 
 func displayMediaInfo(info *analyzer.MediaInfo, verbose bool, writer io.Writer) {
 	// Check if we're writing to a file (disable colors)
 	isFile := writer != os.Stdout
-	
+
 	// Header
 	if isFile {
 		fmt.Fprintln(writer, "===============================================")
@@ -118,7 +127,7 @@ func displayMediaInfo(info *analyzer.MediaInfo, verbose bool, writer io.Writer) 
 	if info.Bitrate > 0 {
 		fmt.Fprintf(writer, "   Overall Bitrate: %s\n", formatBitrate(info.Bitrate))
 	}
-	
+
 	if verbose {
 		fmt.Fprintf(writer, "   Duration (seconds): %.3f\n", info.Duration.Seconds())
 		fmt.Fprintf(writer, "   Size (bytes): %d\n", info.Size)
@@ -192,7 +201,7 @@ func displayMediaInfo(info *analyzer.MediaInfo, verbose bool, writer io.Writer) 
 			fmt.Fprintln(writer)
 		}
 	}
-	
+
 	if verbose {
 		if isFile {
 			fmt.Fprintln(writer, "Technical Summary:")
@@ -275,13 +284,13 @@ func parseFrameRate(frameRate string) float64 {
 	if len(parts) != 2 {
 		return 0
 	}
-	
+
 	numerator, err1 := strconv.ParseFloat(parts[0], 64)
 	denominator, err2 := strconv.ParseFloat(parts[1], 64)
-	
+
 	if err1 != nil || err2 != nil || denominator == 0 {
 		return 0
 	}
-	
+
 	return numerator / denominator
 }

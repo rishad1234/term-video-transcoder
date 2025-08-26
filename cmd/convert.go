@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/rishad1234/term-video-transcoder/internal/security"
 	"github.com/rishad1234/term-video-transcoder/internal/transcoder"
 	"github.com/spf13/cobra"
 )
@@ -79,6 +80,22 @@ func init() {
 }
 
 func runConvert(cmd *cobra.Command, inputPath, outputPath string) error {
+	// Initialize security policy
+	securityPolicy := security.NewDefaultSecurityPolicy()
+
+	// Security validation for file paths
+	if err := securityPolicy.ValidateFilePath(inputPath); err != nil {
+		return fmt.Errorf("security validation failed for input path: %w", err)
+	}
+
+	if err := securityPolicy.ValidateFilePath(outputPath); err != nil {
+		return fmt.Errorf("security validation failed for output path: %w", err)
+	}
+
+	if err := securityPolicy.ValidateFileFormat(outputPath); err != nil {
+		return fmt.Errorf("security validation failed for output format: %w", err)
+	}
+
 	// Validate preset
 	if !isValidPreset(preset) {
 		return fmt.Errorf("invalid preset '%s'. Valid options: low, medium, high", preset)
@@ -174,30 +191,47 @@ func getFileExtension(filename string) string {
 
 // validateCustomParameters validates the custom parameter values
 func validateCustomParameters() error {
+	// Initialize security policy
+	securityPolicy := security.NewDefaultSecurityPolicy()
+
+	// Validate video codec
+	if videoCodec != "" {
+		if err := securityPolicy.ValidateCodec(videoCodec, "video"); err != nil {
+			return fmt.Errorf("invalid video codec: %w", err)
+		}
+	}
+
+	// Validate audio codec
+	if audioCodec != "" {
+		if err := securityPolicy.ValidateCodec(audioCodec, "audio"); err != nil {
+			return fmt.Errorf("invalid audio codec: %w", err)
+		}
+	}
+
 	// Validate resolution format
 	if resolution != "" {
-		if !isValidResolution(resolution) {
-			return fmt.Errorf("invalid resolution format '%s'. Use format like 1920x1080", resolution)
+		if err := securityPolicy.ValidateResolution(resolution); err != nil {
+			return fmt.Errorf("invalid resolution: %w", err)
 		}
 	}
 
 	// Validate framerate
 	if framerate != "" {
-		if !isValidFramerate(framerate) {
-			return fmt.Errorf("invalid framerate '%s'. Use positive numbers like 30, 24, 60", framerate)
+		if err := securityPolicy.ValidateFramerate(framerate); err != nil {
+			return fmt.Errorf("invalid framerate: %w", err)
 		}
 	}
 
 	// Validate bitrate formats
 	if videoBitrate != "" {
-		if !isValidBitrate(videoBitrate) {
-			return fmt.Errorf("invalid video bitrate format '%s'. Use format like 2M, 1500k", videoBitrate)
+		if err := securityPolicy.ValidateBitrate(videoBitrate); err != nil {
+			return fmt.Errorf("invalid video bitrate: %w", err)
 		}
 	}
 
 	if audioBitrate != "" {
-		if !isValidBitrate(audioBitrate) {
-			return fmt.Errorf("invalid audio bitrate format '%s'. Use format like 192k, 128k", audioBitrate)
+		if err := securityPolicy.ValidateBitrate(audioBitrate); err != nil {
+			return fmt.Errorf("invalid audio bitrate: %w", err)
 		}
 	}
 
