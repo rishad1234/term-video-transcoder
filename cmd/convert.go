@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/fatih/color"
@@ -14,9 +13,8 @@ import (
 
 var (
 	// Convert command flags
-	preset        string
-	presetChanged bool // Track if preset flag was explicitly set
-	force         bool
+	preset string
+	force  bool
 
 	// Phase 2: Custom Parameters
 	videoCodec   string
@@ -74,9 +72,6 @@ func init() {
 	convertCmd.Flags().StringVar(&audioBitrate, "audio-bitrate", "", "audio bitrate (e.g., 192k, 128k)")
 	convertCmd.Flags().StringVar(&resolution, "resolution", "", "output resolution (e.g., 1920x1080, 1280x720)")
 	convertCmd.Flags().StringVar(&framerate, "framerate", "", "output frame rate (e.g., 30, 24, 60)")
-
-	// Track when preset flag is explicitly set
-	convertCmd.Flags().Lookup("preset").Changed = false
 }
 
 func runConvert(cmd *cobra.Command, inputPath, outputPath string) error {
@@ -273,43 +268,4 @@ func validateCustomParameters() error {
 func hasCustomParameters() bool {
 	return videoCodec != "" || audioCodec != "" || videoBitrate != "" ||
 		audioBitrate != "" || resolution != "" || framerate != ""
-}
-
-// isValidResolution checks if resolution is in format WIDTHxHEIGHT
-func isValidResolution(res string) bool {
-	parts := strings.Split(res, "x")
-	if len(parts) != 2 {
-		return false
-	}
-
-	for _, part := range parts {
-		if _, err := strconv.Atoi(part); err != nil {
-			return false
-		}
-	}
-	return true
-}
-
-// isValidFramerate checks if framerate is a valid positive number
-func isValidFramerate(fps string) bool {
-	rate, err := strconv.ParseFloat(fps, 64)
-	return err == nil && rate > 0
-}
-
-// isValidBitrate checks if bitrate is in valid format (e.g., 2M, 1500k)
-func isValidBitrate(bitrate string) bool {
-	if len(bitrate) < 2 {
-		return false
-	}
-
-	// Check if it ends with k, K, m, or M
-	suffix := strings.ToLower(bitrate[len(bitrate)-1:])
-	if suffix != "k" && suffix != "m" {
-		return false
-	}
-
-	// Check if the numeric part is valid
-	numeric := bitrate[:len(bitrate)-1]
-	_, err := strconv.ParseFloat(numeric, 64)
-	return err == nil
 }

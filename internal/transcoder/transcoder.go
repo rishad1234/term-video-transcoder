@@ -51,14 +51,7 @@ type AudioExtractionParams struct {
 	Verbose    bool   // Verbose output
 }
 
-// ConvertVideo converts a video file from one format to another (legacy function)
-func ConvertVideo(inputPath, outputPath, preset string, presetExplicit, verbose bool) error {
-	// Call the new function with empty custom parameters
-	emptyParams := CustomParameters{}
-	return ConvertVideoWithCustomParams(inputPath, outputPath, preset, presetExplicit, false, emptyParams, verbose)
-}
-
-// ConvertVideoWithCustomParams converts a video file with custom parameters support// ConvertVideoWithCustomParams converts a video file with custom parameters support
+// ConvertVideoWithCustomParams converts a video file with custom parameters support
 func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetExplicit, customParamsSet bool, customParams CustomParameters, verbose bool) error {
 	// Step 1: Validate all inputs and parameters
 	outputFormat, err := validateConversionInputs(inputPath, outputPath, customParamsSet, customParams)
@@ -318,50 +311,6 @@ func getFormatFromPath(path string) string {
 		return strings.ToLower(ext[1:]) // Remove dot and convert to lowercase
 	}
 	return ""
-}
-
-// selectCodecsWithCustomParams implements codec selection logic with custom parameter support
-func selectCodecsWithCustomParams(inputInfo *analyzer.MediaInfo, outputFormat, preset string, presetExplicit, customParamsSet bool, customParams CustomParameters, verbose bool) (string, string, bool) {
-	// If custom codecs are specified, use them directly
-	if customParams.VideoCodec != "" && customParams.AudioCodec != "" {
-		if verbose {
-			color.Green("🎯 Using custom codecs specified by user")
-			fmt.Printf("Video codec: %s\n", customParams.VideoCodec)
-			fmt.Printf("Audio codec: %s\n", customParams.AudioCodec)
-		}
-		return customParams.VideoCodec, customParams.AudioCodec, false
-	}
-
-	// If any custom parameter is set, disable stream copy optimization
-	if customParamsSet {
-		videoCodec := customParams.VideoCodec
-		audioCodec := customParams.AudioCodec
-
-		// Use default codecs if not specified
-		if videoCodec == "" {
-			defaultVideo, _ := getDefaultCodecs(outputFormat)
-			videoCodec = defaultVideo
-		}
-		if audioCodec == "" {
-			_, defaultAudio := getDefaultCodecs(outputFormat)
-			audioCodec = defaultAudio
-		}
-
-		// Apply quality presets
-		videoCodec = applyVideoPreset(videoCodec, preset)
-		audioCodec = applyAudioPreset(audioCodec, preset)
-
-		if verbose {
-			color.Yellow("⚙️  Using custom parameters (stream copy disabled)")
-			fmt.Printf("Video codec: %s\n", videoCodec)
-			fmt.Printf("Audio codec: %s\n", audioCodec)
-		}
-
-		return videoCodec, audioCodec, false
-	}
-
-	// Fall back to original logic for automatic selection
-	return selectCodecs(inputInfo, outputFormat, preset, presetExplicit, verbose)
 }
 
 // selectCodecs implements automatic codec selection logic
