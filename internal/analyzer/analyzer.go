@@ -50,7 +50,7 @@ func AnalyzeMedia(filepath string) (*MediaInfo, error) {
 	}
 
 	// Run ffprobe command
-	cmd := exec.Command("ffprobe", 
+	cmd := exec.Command("ffprobe",
 		"-v", "quiet",
 		"-print_format", "json",
 		"-show_format",
@@ -71,77 +71,111 @@ func parseFFProbeOutput(jsonOutput, filepath string) (*MediaInfo, error) {
 		Filename: filepath,
 	}
 
-	// Parse format information
-	format := gjson.Get(jsonOutput, "format")
-	if format.Exists() {
-		info.Format = format.Get("format_name").String()
-		
-		// Parse duration
-		if durationStr := format.Get("duration").String(); durationStr != "" {
-			if duration, err := strconv.ParseFloat(durationStr, 64); err == nil {
-				info.Duration = time.Duration(duration * float64(time.Second))
-			}
-		}
-		
-		// Parse size
-		if sizeStr := format.Get("size").String(); sizeStr != "" {
-			if size, err := strconv.ParseInt(sizeStr, 10, 64); err == nil {
-				info.Size = size
-			}
-		}
-		
-		// Parse bitrate
-		if bitrateStr := format.Get("bit_rate").String(); bitrateStr != "" {
-			if bitrate, err := strconv.ParseInt(bitrateStr, 10, 64); err == nil {
-				info.Bitrate = bitrate
-			}
-		}
+	if err := parseFormatInformation(jsonOutput, info); err != nil {
+		return nil, fmt.Errorf("parsing format information: %w", err)
 	}
 
-	// Parse streams
-	streams := gjson.Get(jsonOutput, "streams").Array()
-	for _, stream := range streams {
-		codecType := stream.Get("codec_type").String()
-		
-		switch codecType {
-		case "video":
-			videoStream := VideoStream{
-				Index:       int(stream.Get("index").Int()),
-				Codec:       stream.Get("codec_name").String(),
-				Width:       int(stream.Get("width").Int()),
-				Height:      int(stream.Get("height").Int()),
-				FrameRate:   stream.Get("r_frame_rate").String(),
-				PixelFormat: stream.Get("pix_fmt").String(),
-			}
-			
-			if bitrateStr := stream.Get("bit_rate").String(); bitrateStr != "" {
-				if bitrate, err := strconv.ParseInt(bitrateStr, 10, 64); err == nil {
-					videoStream.Bitrate = bitrate
-				}
-			}
-			
-			info.VideoStreams = append(info.VideoStreams, videoStream)
-			
-		case "audio":
-			audioStream := AudioStream{
-				Index:      int(stream.Get("index").Int()),
-				Codec:      stream.Get("codec_name").String(),
-				SampleRate: int(stream.Get("sample_rate").Int()),
-				Channels:   int(stream.Get("channels").Int()),
-				Language:   stream.Get("tags.language").String(),
-			}
-			
-			if bitrateStr := stream.Get("bit_rate").String(); bitrateStr != "" {
-				if bitrate, err := strconv.ParseInt(bitrateStr, 10, 64); err == nil {
-					audioStream.Bitrate = bitrate
-				}
-			}
-			
-			info.AudioStreams = append(info.AudioStreams, audioStream)
-		}
+	if err := parseStreamInformation(jsonOutput, info); err != nil {
+		return nil, fmt.Errorf("parsing stream information: %w", err)
 	}
 
 	return info, nil
+}
+
+// parseFormatInformation extracts format-level metadata
+func parseFormatInformation(jsonOutput string, info *MediaInfo) error {
+	format := gjson.Get(jsonOutput, "format")
+	if !format.Exists() {
+		return nil
+	}
+
+	info.Format = format.Get("format_name").String()
+	parseDuration(format, info)
+	parseSize(format, info)
+	parseBitrate(format, info)
+
+	return nil
+}
+
+// parseDuration extracts and converts duration from format metadata
+func parseDuration(format gjson.Result, info *MediaInfo) {
+	if durationStr := format.Get("duration").String(); durationStr != "" {
+		if duration, err := strconv.ParseFloat(durationStr, 64); err == nil {
+			info.Duration = time.Duration(duration * float64(time.Second))
+		}
+	}
+}
+
+// parseSize extracts file size from format metadata
+func parseSize(format gjson.Result, info *MediaInfo) {
+	if sizeStr := format.Get("size").String(); sizeStr != "" {
+		if size, err := strconv.ParseInt(sizeStr, 10, 64); err == nil {
+			info.Size = size
+		}
+	}
+}
+
+// parseBitrate extracts overall bitrate from format metadata
+func parseBitrate(format gjson.Result, info *MediaInfo) {
+	if bitrateStr := format.Get("bit_rate").String(); bitrateStr != "" {
+		if bitrate, err := strconv.ParseInt(bitrateStr, 10, 64); err == nil {
+			info.Bitrate = bitrate
+		}
+	}
+}
+
+// parseStreamInformation extracts all stream information
+func parseStreamInformation(jsonOutput string, info *MediaInfo) error {
+	streams := gjson.Get(jsonOutput, "streams").Array()
+	for _, stream := range streams {
+		codecType := stream.Get("codec_type").String()
+
+		switch codecType {
+		case "video":
+			parseVideoStream(stream, info)
+		case "audio":
+			parseAudioStream(stream, info)
+		}
+	}
+	return nil
+}
+
+// parseVideoStream extracts video stream metadata
+func parseVideoStream(stream gjson.Result, info *MediaInfo) {
+	videoStream := VideoStream{
+		Index:       int(stream.Get("index").Int()),
+		Codec:       stream.Get("codec_name").String(),
+		Width:       int(stream.Get("width").Int()),
+		Height:      int(stream.Get("height").Int()),
+		FrameRate:   stream.Get("r_frame_rate").String(),
+		PixelFormat: stream.Get("pix_fmt").String(),
+	}
+
+	parseStreamBitrate(stream, &videoStream.Bitrate)
+	info.VideoStreams = append(info.VideoStreams, videoStream)
+}
+
+// parseAudioStream extracts audio stream metadata
+func parseAudioStream(stream gjson.Result, info *MediaInfo) {
+	audioStream := AudioStream{
+		Index:      int(stream.Get("index").Int()),
+		Codec:      stream.Get("codec_name").String(),
+		SampleRate: int(stream.Get("sample_rate").Int()),
+		Channels:   int(stream.Get("channels").Int()),
+		Language:   stream.Get("tags.language").String(),
+	}
+
+	parseStreamBitrate(stream, &audioStream.Bitrate)
+	info.AudioStreams = append(info.AudioStreams, audioStream)
+}
+
+// parseStreamBitrate extracts bitrate for individual streams
+func parseStreamBitrate(stream gjson.Result, bitrate *int64) {
+	if bitrateStr := stream.Get("bit_rate").String(); bitrateStr != "" {
+		if parsedBitrate, err := strconv.ParseInt(bitrateStr, 10, 64); err == nil {
+			*bitrate = parsedBitrate
+		}
+	}
 }
 
 // CheckFFProbe verifies that ffprobe is available in the system

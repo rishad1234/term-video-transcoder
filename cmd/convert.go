@@ -80,10 +80,27 @@ func init() {
 }
 
 func runConvert(cmd *cobra.Command, inputPath, outputPath string) error {
-	// Initialize security policy
+	if err := performSecurityValidation(inputPath, outputPath); err != nil {
+		return err
+	}
+
+	if err := validateConversionParameters(); err != nil {
+		return err
+	}
+
+	if err := handleOutputFileCheck(outputPath); err != nil {
+		return err
+	}
+
+	displayConversionProgress(inputPath, outputPath, preset)
+
+	return executeConversion(cmd, inputPath, outputPath)
+}
+
+// performSecurityValidation validates file paths and formats for security
+func performSecurityValidation(inputPath, outputPath string) error {
 	securityPolicy := security.NewDefaultSecurityPolicy()
 
-	// Security validation for file paths
 	if err := securityPolicy.ValidateFilePath(inputPath); err != nil {
 		return fmt.Errorf("security validation failed for input path: %w", err)
 	}
@@ -96,39 +113,59 @@ func runConvert(cmd *cobra.Command, inputPath, outputPath string) error {
 		return fmt.Errorf("security validation failed for output format: %w", err)
 	}
 
-	// Validate preset
+	return nil
+}
+
+// validateConversionParameters validates preset and custom parameters
+func validateConversionParameters() error {
 	if !isValidPreset(preset) {
 		return fmt.Errorf("invalid preset '%s'. Valid options: low, medium, high", preset)
 	}
 
-	// Validate custom parameters
 	if err := validateCustomParameters(); err != nil {
 		return err
 	}
 
-	// Check if output file exists (unless force is specified)
+	return nil
+}
+
+// handleOutputFileCheck verifies output file handling unless force is enabled
+func handleOutputFileCheck(outputPath string) error {
 	if !force {
 		if err := checkOutputFile(outputPath); err != nil {
 			return err
 		}
 	}
+	return nil
+}
 
-	// Display conversion info (unless quiet mode)
+// displayConversionProgress shows conversion information unless in quiet mode
+func displayConversionProgress(inputPath, outputPath, preset string) {
 	if !quiet {
 		displayConversionInfo(inputPath, outputPath, preset)
 	}
+}
 
-	// Check if preset was explicitly set by user
+// executeConversion performs the actual video conversion
+func executeConversion(cmd *cobra.Command, inputPath, outputPath string) error {
 	presetExplicit := cmd.Flags().Lookup("preset").Changed
-
-	// Check if any custom parameters were set
 	customParamsSet := hasCustomParameters()
-
-	// Determine verbosity: quiet overrides verbose
 	useVerbose := verbose && !quiet
 
-	// Create custom parameters struct
-	customParams := transcoder.CustomParameters{
+	customParams := buildCustomParameters()
+
+	err := transcoder.ConvertVideoWithCustomParams(inputPath, outputPath, preset, presetExplicit, customParamsSet, customParams, useVerbose)
+	if err != nil {
+		return fmt.Errorf("conversion failed: %w", err)
+	}
+
+	displaySuccessMessage(outputPath)
+	return nil
+}
+
+// buildCustomParameters creates the custom parameters struct
+func buildCustomParameters() transcoder.CustomParameters {
+	return transcoder.CustomParameters{
 		VideoCodec:   videoCodec,
 		AudioCodec:   audioCodec,
 		VideoBitrate: videoBitrate,
@@ -136,20 +173,14 @@ func runConvert(cmd *cobra.Command, inputPath, outputPath string) error {
 		Resolution:   resolution,
 		Framerate:    framerate,
 	}
+}
 
-	// Perform the conversion
-	err := transcoder.ConvertVideoWithCustomParams(inputPath, outputPath, preset, presetExplicit, customParamsSet, customParams, useVerbose)
-	if err != nil {
-		return fmt.Errorf("conversion failed: %w", err)
-	}
-
-	// Success message (unless quiet mode)
+// displaySuccessMessage shows completion message unless in quiet mode
+func displaySuccessMessage(outputPath string) {
 	if !quiet {
 		color.Green("✅ Conversion completed successfully!")
 		fmt.Printf("Output saved to: %s\n", outputPath)
 	}
-
-	return nil
 }
 
 func isValidPreset(preset string) bool {

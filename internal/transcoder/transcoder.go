@@ -3,6 +3,7 @@ package transcoder
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -732,10 +733,36 @@ func executeFFmpeg(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo, verbose bool) e
 }
 
 // executeFFmpegWithProgress runs FFmpeg and displays a progress indicator
+// executeFFmpegWithProgress runs FFmpeg and displays a progress indicator
 func executeFFmpegWithProgress(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo) error {
+	// Setup progress tracking
+	progressTracker, err := initializeProgressTracking(cmd, inputInfo)
+	if err != nil {
+		return err
+	}
+
+	// Start FFmpeg process
+	if err := startFFmpegProcess(cmd, progressTracker); err != nil {
+		return err
+	}
+
+	// Monitor progress and wait for completion
+	return monitorFFmpegProgress(cmd, progressTracker)
+}
+
+// ProgressTracker holds progress tracking state
+type ProgressTracker struct {
+	totalSeconds  float64
+	progressShown bool
+	stderrPipe    io.ReadCloser
+	timeRegex     *regexp.Regexp
+	speedRegex    *regexp.Regexp
+}
+
+// initializeProgressTracking sets up progress tracking for FFmpeg execution
+func initializeProgressTracking(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo) (*ProgressTracker, error) {
 	color.Blue("🚀 Starting FFmpeg conversion...")
 
-	// Show initial progress
 	totalSeconds := inputInfo.Duration.Seconds()
 	fmt.Printf("⏳ Processing %.1fs video...\n", totalSeconds)
 
@@ -749,71 +776,41 @@ func executeFFmpegWithProgress(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo) err
 	// Create pipes for stderr (stats)
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create stderr pipe: %w", err)
+		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
 	// Suppress stdout in non-verbose mode
 	cmd.Stdout = nil
 
+	return &ProgressTracker{
+		totalSeconds:  totalSeconds,
+		progressShown: false,
+		stderrPipe:    stderrPipe,
+		timeRegex:     regexp.MustCompile(`time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})`),
+		speedRegex:    regexp.MustCompile(`speed=\s*([0-9.]+)x`),
+	}, nil
+}
+
+// startFFmpegProcess starts the FFmpeg process and begins progress monitoring
+func startFFmpegProcess(cmd *exec.Cmd, tracker *ProgressTracker) error {
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
-	// Track if we've shown any progress
-	progressShown := false
+	// Start progress monitoring goroutine
+	go parseFFmpegProgressOutput(tracker)
 
-	// Parse FFmpeg stats output for progress
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		timeRegex := regexp.MustCompile(`time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})`)
-		speedRegex := regexp.MustCompile(`speed=\s*([0-9.]+)x`)
+	return nil
+}
 
-		for scanner.Scan() {
-			line := scanner.Text()
-
-			// Parse time progress
-			if matches := timeRegex.FindStringSubmatch(line); len(matches) > 4 {
-				hours, _ := strconv.Atoi(matches[1])
-				minutes, _ := strconv.Atoi(matches[2])
-				seconds, _ := strconv.Atoi(matches[3])
-				centiseconds, _ := strconv.Atoi(matches[4])
-
-				currentSeconds := float64(hours*3600+minutes*60+seconds) + float64(centiseconds)/100.0
-				progressPercent := (currentSeconds / totalSeconds) * 100
-				if progressPercent > 100 {
-					progressPercent = 100
-				}
-
-				// Parse speed
-				speed := 0.0
-				if speedMatches := speedRegex.FindStringSubmatch(line); len(speedMatches) > 1 {
-					speed, _ = strconv.ParseFloat(speedMatches[1], 64)
-				}
-
-				// Calculate ETA
-				eta := ""
-				if speed > 0 && currentSeconds < totalSeconds {
-					remainingSeconds := (totalSeconds - currentSeconds) / speed
-					eta = fmt.Sprintf(" (ETA: %s)", formatDuration(time.Duration(remainingSeconds)*time.Second))
-				}
-
-				// Display progress bar
-				barWidth := 30
-				filled := int((progressPercent / 100) * float64(barWidth))
-				bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-
-				fmt.Printf("\r📊 [%s] %.1f%% - %.1fx speed%s", bar, progressPercent, speed, eta)
-				progressShown = true
-			}
-		}
-	}()
-
+// monitorFFmpegProgress waits for FFmpeg completion and handles cleanup
+func monitorFFmpegProgress(cmd *exec.Cmd, tracker *ProgressTracker) error {
 	// Wait for command to complete
-	err = cmd.Wait()
+	err := cmd.Wait()
 
 	// Clear the progress line if we showed any
-	if progressShown {
+	if tracker.progressShown {
 		fmt.Printf("\r%s\r", strings.Repeat(" ", 100))
 	}
 
@@ -822,6 +819,73 @@ func executeFFmpegWithProgress(cmd *exec.Cmd, inputInfo *analyzer.MediaInfo) err
 	}
 
 	return nil
+}
+
+// parseFFmpegProgressOutput parses FFmpeg stats output for progress information
+func parseFFmpegProgressOutput(tracker *ProgressTracker) {
+	scanner := bufio.NewScanner(tracker.stderrPipe)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Parse time progress
+		if matches := tracker.timeRegex.FindStringSubmatch(line); len(matches) > 4 {
+			currentSeconds := parseTimeFromMatches(matches)
+			progressPercent := calculateProgressPercent(currentSeconds, tracker.totalSeconds)
+			speed := parseSpeedFromLine(line, tracker.speedRegex)
+			eta := calculateETA(speed, currentSeconds, tracker.totalSeconds)
+
+			displayProgressBar(progressPercent, speed, eta)
+			tracker.progressShown = true
+		}
+	}
+}
+
+// parseTimeFromMatches extracts current time in seconds from regex matches
+func parseTimeFromMatches(matches []string) float64 {
+	hours, _ := strconv.Atoi(matches[1])
+	minutes, _ := strconv.Atoi(matches[2])
+	seconds, _ := strconv.Atoi(matches[3])
+	centiseconds, _ := strconv.Atoi(matches[4])
+
+	return float64(hours*3600+minutes*60+seconds) + float64(centiseconds)/100.0
+}
+
+// calculateProgressPercent calculates the progress percentage
+func calculateProgressPercent(currentSeconds, totalSeconds float64) float64 {
+	progressPercent := (currentSeconds / totalSeconds) * 100
+	if progressPercent > 100 {
+		progressPercent = 100
+	}
+	return progressPercent
+}
+
+// parseSpeedFromLine extracts speed information from FFmpeg output line
+func parseSpeedFromLine(line string, speedRegex *regexp.Regexp) float64 {
+	speed := 0.0
+	if speedMatches := speedRegex.FindStringSubmatch(line); len(speedMatches) > 1 {
+		speed, _ = strconv.ParseFloat(speedMatches[1], 64)
+	}
+	return speed
+}
+
+// calculateETA calculates estimated time of arrival
+func calculateETA(speed, currentSeconds, totalSeconds float64) string {
+	eta := ""
+	if speed > 0 && currentSeconds < totalSeconds {
+		remainingSeconds := (totalSeconds - currentSeconds) / speed
+		eta = fmt.Sprintf(" (ETA: %s)", formatDuration(time.Duration(remainingSeconds)*time.Second))
+	}
+	return eta
+}
+
+// displayProgressBar renders the progress bar
+func displayProgressBar(progressPercent, speed float64, eta string) {
+	barWidth := 30
+	filled := int((progressPercent / 100) * float64(barWidth))
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+
+	fmt.Printf("\r📊 [%s] %.1f%% - %.1fx speed%s", bar, progressPercent, speed, eta)
 }
 
 // formatDuration formats a duration into a human-readable string
