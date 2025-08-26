@@ -9,8 +9,8 @@ import (
 
 var (
 	// Version information
-	version = "0.1.0"
-	
+	version = "1.0.0"
+
 	// Global flags
 	verbose bool
 	quiet   bool
@@ -28,12 +28,12 @@ var rootCmd = &cobra.Command{
 └─────────────────────────────────────────────┘
 
 A fast, efficient command-line tool for video transcoding,
-media analysis, and batch processing.
+media analysis, and audio extraction.
 
 Examples:
   transcoder convert input.avi output.mp4
   transcoder info video.mkv
-  transcoder batch *.mov --format mp4
+  transcoder extract movie.mkv soundtrack.mp3
   transcoder convert input.mp4 output.webm --preset high
 	`),
 	Version: version,
@@ -49,7 +49,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", true, "verbose output (enabled by default)")
 	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode (minimal output)")
 	rootCmd.PersistentFlags().StringVarP(&output, "output", "o", "", "output file or directory")
-	
+
 	// Add version template
 	rootCmd.SetVersionTemplate(fmt.Sprintf("Terminal Video Transcoder %s\n", version))
 }

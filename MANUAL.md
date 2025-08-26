@@ -28,7 +28,6 @@ Terminal Video Transcoder is a fast, efficient command-line tool for video trans
 - Audio extraction from video files
 - Quality presets for different use cases
 - Custom parameter control for advanced users
-- Batch processing capabilities
 - Real-time progress feedback
 - Cross-platform support
 
@@ -297,8 +296,8 @@ transcoder info *.mp4
 # Standard conversion
 transcoder convert input.avi output.mp4
 
-# Batch conversion (coming soon)
-transcoder batch *.avi --format mp4 --output-dir converted/
+# High quality conversion
+transcoder convert input.mkv output.mp4 --preset high
 ```
 
 #### Audio Processing

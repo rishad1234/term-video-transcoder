@@ -138,9 +138,9 @@ The project includes comprehensive test scripts:
 Contributions welcome! Areas for improvement:
 
 - Additional format support
-- Batch processing features
 - Performance optimizations
 - Platform-specific builds
+- User interface enhancements
 
 ## License
 
