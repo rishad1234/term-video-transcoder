@@ -57,20 +57,62 @@ func ConvertVideo(inputPath, outputPath, preset string, presetExplicit, verbose 
 	return ConvertVideoWithCustomParams(inputPath, outputPath, preset, presetExplicit, false, emptyParams, verbose)
 }
 
-// ConvertVideoWithCustomParams converts a video file with custom parameters support
+// ConvertVideoWithCustomParams converts a video file with custom parameters support// ConvertVideoWithCustomParams converts a video file with custom parameters support
 func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetExplicit, customParamsSet bool, customParams CustomParameters, verbose bool) error {
-	// Step 1: Validate input file
-	if err := validateInputFile(inputPath); err != nil {
+	// Step 1: Validate all inputs and parameters
+	outputFormat, err := validateConversionInputs(inputPath, outputPath, customParamsSet, customParams)
+	if err != nil {
 		return err
 	}
 
-	// Step 2: Validate output format
-	outputFormat := getFormatFromPath(outputPath)
-	if !SupportedFormats[outputFormat] {
-		return fmt.Errorf("unsupported output format: %s", outputFormat)
+	// Step 2: Analyze input media
+	inputInfo, err := analyzeInputMedia(inputPath, verbose)
+	if err != nil {
+		return err
 	}
 
-	// Step 3: Security validation for file paths
+	// Step 3: Select codecs and prepare parameters
+	videoCodec, audioCodec, finalParams, canCopy, err := prepareConversionParameters(
+		inputInfo, outputFormat, preset, presetExplicit, customParamsSet, customParams, verbose)
+	if err != nil {
+		return err
+	}
+
+	// Step 4: Build and execute conversion
+	return executeConversion(inputPath, outputPath, videoCodec, audioCodec, preset,
+		finalParams, inputInfo, canCopy, customParamsSet, verbose)
+}
+
+// validateConversionInputs performs comprehensive validation of all conversion inputs
+func validateConversionInputs(inputPath, outputPath string, customParamsSet bool, customParams CustomParameters) (string, error) {
+	// Validate input file
+	if err := validateInputFile(inputPath); err != nil {
+		return "", err
+	}
+
+	// Validate output format
+	outputFormat := getFormatFromPath(outputPath)
+	if !SupportedFormats[outputFormat] {
+		return "", fmt.Errorf("unsupported output format: %s", outputFormat)
+	}
+
+	// Security validation for file paths
+	if err := validateConversionPaths(inputPath, outputPath); err != nil {
+		return "", err
+	}
+
+	// Security validation for custom parameters
+	if customParamsSet {
+		if err := validateConversionCustomParams(customParams); err != nil {
+			return "", err
+		}
+	}
+
+	return outputFormat, nil
+}
+
+// validateConversionPaths validates input and output file paths for security
+func validateConversionPaths(inputPath, outputPath string) error {
 	if err := securityPolicy.ValidateFilePath(inputPath); err != nil {
 		return fmt.Errorf("security validation failed for input path: %w", err)
 	}
@@ -83,81 +125,108 @@ func ConvertVideoWithCustomParams(inputPath, outputPath, preset string, presetEx
 		return fmt.Errorf("security validation failed for output format: %w", err)
 	}
 
-	// Step 4: Security validation for custom parameters
-	if customParamsSet {
-		if customParams.VideoCodec != "" {
-			if err := securityPolicy.ValidateCodec(customParams.VideoCodec, "video"); err != nil {
-				return fmt.Errorf("security validation failed for video codec: %w", err)
-			}
-		}
+	return nil
+}
 
-		if customParams.AudioCodec != "" {
-			if err := securityPolicy.ValidateCodec(customParams.AudioCodec, "audio"); err != nil {
-				return fmt.Errorf("security validation failed for audio codec: %w", err)
-			}
-		}
-
-		if err := securityPolicy.ValidateBitrate(customParams.VideoBitrate); err != nil {
-			return fmt.Errorf("security validation failed for video bitrate: %w", err)
-		}
-
-		if err := securityPolicy.ValidateBitrate(customParams.AudioBitrate); err != nil {
-			return fmt.Errorf("security validation failed for audio bitrate: %w", err)
-		}
-
-		if err := securityPolicy.ValidateResolution(customParams.Resolution); err != nil {
-			return fmt.Errorf("security validation failed for resolution: %w", err)
-		}
-
-		if err := securityPolicy.ValidateFramerate(customParams.Framerate); err != nil {
-			return fmt.Errorf("security validation failed for framerate: %w", err)
+// validateConversionCustomParams validates custom parameters for security
+func validateConversionCustomParams(customParams CustomParameters) error {
+	if customParams.VideoCodec != "" {
+		if err := securityPolicy.ValidateCodec(customParams.VideoCodec, "video"); err != nil {
+			return fmt.Errorf("security validation failed for video codec: %w", err)
 		}
 	}
 
-	// Step 5: Analyze input media
+	if customParams.AudioCodec != "" {
+		if err := securityPolicy.ValidateCodec(customParams.AudioCodec, "audio"); err != nil {
+			return fmt.Errorf("security validation failed for audio codec: %w", err)
+		}
+	}
+
+	if err := securityPolicy.ValidateBitrate(customParams.VideoBitrate); err != nil {
+		return fmt.Errorf("security validation failed for video bitrate: %w", err)
+	}
+
+	if err := securityPolicy.ValidateBitrate(customParams.AudioBitrate); err != nil {
+		return fmt.Errorf("security validation failed for audio bitrate: %w", err)
+	}
+
+	if err := securityPolicy.ValidateResolution(customParams.Resolution); err != nil {
+		return fmt.Errorf("security validation failed for resolution: %w", err)
+	}
+
+	if err := securityPolicy.ValidateFramerate(customParams.Framerate); err != nil {
+		return fmt.Errorf("security validation failed for framerate: %w", err)
+	}
+
+	return nil
+}
+
+// analyzeInputMedia analyzes the input media file
+func analyzeInputMedia(inputPath string, verbose bool) (*analyzer.MediaInfo, error) {
 	if verbose {
 		color.Blue("🔍 Analyzing input media...")
 	}
+
 	inputInfo, err := analyzer.AnalyzeMedia(inputPath)
 	if err != nil {
-		return fmt.Errorf("failed to analyze input: %w", err)
+		return nil, fmt.Errorf("failed to analyze input: %w", err)
 	}
 
-	// Step 6: Select optimal codecs (considering custom parameters and security)
-	videoCodec, audioCodec, canCopy := selectCodecsWithCustomParamsSecure(inputInfo, outputFormat, preset, presetExplicit, customParamsSet, customParams, verbose)
+	return inputInfo, nil
+}
 
-	// Step 7: Apply preset-based bitrates if no custom bitrates specified
-	secureCustomParams := customParams
+// prepareConversionParameters selects codecs and prepares final parameters for conversion
+func prepareConversionParameters(inputInfo *analyzer.MediaInfo, outputFormat, preset string,
+	presetExplicit, customParamsSet bool, customParams CustomParameters, verbose bool) (string, string, CustomParameters, bool, error) {
+
+	// Select optimal codecs (considering custom parameters and security)
+	videoCodec, audioCodec, canCopy := selectCodecsWithCustomParamsSecure(
+		inputInfo, outputFormat, preset, presetExplicit, customParamsSet, customParams, verbose)
+
+	// Apply preset-based bitrates if no custom bitrates specified
+	finalParams := customParams
 	if !customParamsSet || customParams.VideoBitrate == "" {
-		secureCustomParams.VideoBitrate = getPresetVideoBitrate(preset)
+		finalParams.VideoBitrate = getPresetVideoBitrate(preset)
 	}
 	if !customParamsSet || customParams.AudioBitrate == "" {
-		secureCustomParams.AudioBitrate = getPresetAudioBitrate(preset)
+		finalParams.AudioBitrate = getPresetAudioBitrate(preset)
 	}
 
-	// Step 8: Build FFmpeg command (with security validation)
-	cmd := buildFFmpegCommandWithCustomParams(inputPath, outputPath, videoCodec, audioCodec, preset, secureCustomParams, verbose)
+	return videoCodec, audioCodec, finalParams, canCopy, nil
+}
+
+// executeConversion builds the command and executes the conversion
+func executeConversion(inputPath, outputPath, videoCodec, audioCodec, preset string,
+	customParams CustomParameters, inputInfo *analyzer.MediaInfo, canCopy, customParamsSet, verbose bool) error {
+
+	// Build FFmpeg command (with security validation)
+	cmd := buildFFmpegCommandWithCustomParams(inputPath, outputPath, videoCodec, audioCodec, preset, customParams, verbose)
 	if cmd == nil {
 		return fmt.Errorf("failed to build secure FFmpeg command")
 	}
 
-	// Step 9: Execute conversion
+	// Display conversion information if verbose
 	if verbose {
-		if canCopy {
-			color.Green("⚡ Using stream copy (no re-encoding needed)")
-		} else {
-			color.Yellow("🔄 Re-encoding with selected codecs")
-		}
-
-		// Show custom parameters if any are set
-		if customParamsSet {
-			displayCustomParameters(secureCustomParams)
-		}
-
-		fmt.Printf("Command: %s\n\n", strings.Join(cmd.Args, " "))
+		displayConversionInfo(canCopy, customParamsSet, customParams, cmd)
 	}
 
 	return executeFFmpeg(cmd, inputInfo, verbose)
+}
+
+// displayConversionInfo shows conversion information in verbose mode
+func displayConversionInfo(canCopy, customParamsSet bool, customParams CustomParameters, cmd *exec.Cmd) {
+	if canCopy {
+		color.Green("⚡ Using stream copy (no re-encoding needed)")
+	} else {
+		color.Yellow("🔄 Re-encoding with selected codecs")
+	}
+
+	// Show custom parameters if any are set
+	if customParamsSet {
+		displayCustomParameters(customParams)
+	}
+
+	fmt.Printf("Command: %s\n\n", strings.Join(cmd.Args, " "))
 }
 
 // selectCodecsWithCustomParamsSecure implements secure codec selection logic
@@ -430,107 +499,216 @@ func applyAudioPreset(baseCodec, preset string) string {
 
 // buildFFmpegCommandWithCustomParams constructs the FFmpeg command with custom parameters
 // This function now includes security validation to prevent command injection
-func buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, preset string, customParams CustomParameters, verbose bool) *exec.Cmd {
-	// Security validation for all parameters
+// FFmpegCommandBuilder represents a builder for constructing FFmpeg commands
+type FFmpegCommandBuilder struct {
+	args     []string
+	verbose  bool
+	hasError bool
+}
+
+// NewFFmpegCommandBuilder creates a new FFmpeg command builder
+func NewFFmpegCommandBuilder(verbose bool) *FFmpegCommandBuilder {
+	return &FFmpegCommandBuilder{
+		args:     []string{"ffmpeg"},
+		verbose:  verbose,
+		hasError: false,
+	}
+}
+
+// WithInput adds input file to the command
+func (b *FFmpegCommandBuilder) WithInput(input string) *FFmpegCommandBuilder {
+	if b.hasError {
+		return b
+	}
+
 	if err := securityPolicy.ValidateFilePath(input); err != nil {
-		if verbose {
+		if b.verbose {
 			color.Red("Security validation failed for input path: %v", err)
 		}
-		return nil
+		b.hasError = true
+		return b
+	}
+
+	b.args = append(b.args, "-i", input)
+	return b
+}
+
+// WithVideoCodec adds video codec configuration to the command
+func (b *FFmpegCommandBuilder) WithVideoCodec(videoCodec string, customParams CustomParameters) *FFmpegCommandBuilder {
+	if b.hasError {
+		return b
+	}
+
+	if videoCodec == "copy" {
+		b.args = append(b.args, "-c:v", "copy")
+	} else {
+		if err := b.addVideoCodecWithValidation(videoCodec, customParams); err != nil {
+			b.hasError = true
+		}
+	}
+
+	return b
+}
+
+// WithAudioCodec adds audio codec configuration to the command
+func (b *FFmpegCommandBuilder) WithAudioCodec(audioCodec string, customParams CustomParameters) *FFmpegCommandBuilder {
+	if b.hasError {
+		return b
+	}
+
+	if audioCodec == "copy" {
+		b.args = append(b.args, "-c:a", "copy")
+	} else {
+		if err := b.addAudioCodecWithValidation(audioCodec, customParams); err != nil {
+			b.hasError = true
+		}
+	}
+
+	return b
+}
+
+// WithCustomParameters adds additional custom parameters to the command
+func (b *FFmpegCommandBuilder) WithCustomParameters(customParams CustomParameters) *FFmpegCommandBuilder {
+	if b.hasError {
+		return b
+	}
+
+	// Add resolution scaling if specified
+	if customParams.Resolution != "" {
+		if err := b.addResolutionParameter(customParams.Resolution); err != nil {
+			b.hasError = true
+			return b
+		}
+	}
+
+	// Add framerate if specified
+	if customParams.Framerate != "" {
+		if err := b.addFramerateParameter(customParams.Framerate); err != nil {
+			b.hasError = true
+			return b
+		}
+	}
+
+	return b
+}
+
+// WithOutput adds output file to the command
+func (b *FFmpegCommandBuilder) WithOutput(output string) *FFmpegCommandBuilder {
+	if b.hasError {
+		return b
 	}
 
 	if err := securityPolicy.ValidateFilePath(output); err != nil {
-		if verbose {
+		if b.verbose {
 			color.Red("Security validation failed for output path: %v", err)
 		}
+		b.hasError = true
+		return b
+	}
+
+	b.args = append(b.args, "-y", output)
+	return b
+}
+
+// Build creates the final exec.Cmd or returns nil if there were errors
+func (b *FFmpegCommandBuilder) Build() *exec.Cmd {
+	if b.hasError {
 		return nil
 	}
 
-	args := []string{
-		"ffmpeg",
-		"-i", input,
+	return exec.Command(b.args[0], b.args[1:]...)
+}
+
+// addVideoCodecWithValidation adds video codec with security validation
+func (b *FFmpegCommandBuilder) addVideoCodecWithValidation(videoCodec string, customParams CustomParameters) error {
+	// Validate video codec - prevent command injection
+	if err := securityPolicy.ValidateCodec(videoCodec, "video"); err != nil {
+		if b.verbose {
+			color.Red("Security validation failed for video codec: %v", err)
+		}
+		return err
 	}
 
-	// Add video codec parameters with security validation
-	if videoCodec == "copy" {
-		args = append(args, "-c:v", "copy")
-	} else {
-		// Validate video codec - prevent command injection
-		if err := securityPolicy.ValidateCodec(videoCodec, "video"); err != nil {
-			if verbose {
-				color.Red("Security validation failed for video codec: %v", err)
-			}
-			return nil
-		}
+	// Only use the validated codec name - no additional parameters
+	b.args = append(b.args, "-c:v", videoCodec)
 
-		// Only use the validated codec name - no additional parameters
-		args = append(args, "-c:v", videoCodec)
-
-		// Add custom video bitrate if specified and validated
-		if customParams.VideoBitrate != "" {
-			if err := securityPolicy.ValidateBitrate(customParams.VideoBitrate); err != nil {
-				if verbose {
-					color.Red("Security validation failed for video bitrate: %v", err)
-				}
-				return nil
+	// Add custom video bitrate if specified and validated
+	if customParams.VideoBitrate != "" {
+		if err := securityPolicy.ValidateBitrate(customParams.VideoBitrate); err != nil {
+			if b.verbose {
+				color.Red("Security validation failed for video bitrate: %v", err)
 			}
-			args = append(args, "-b:v", customParams.VideoBitrate)
+			return err
 		}
+		b.args = append(b.args, "-b:v", customParams.VideoBitrate)
 	}
 
-	// Add audio codec parameters with security validation
-	if audioCodec == "copy" {
-		args = append(args, "-c:a", "copy")
-	} else {
-		// Validate audio codec - prevent command injection
-		if err := securityPolicy.ValidateCodec(audioCodec, "audio"); err != nil {
-			if verbose {
-				color.Red("Security validation failed for audio codec: %v", err)
-			}
-			return nil
-		}
+	return nil
+}
 
-		// Only use the validated codec name - no additional parameters
-		args = append(args, "-c:a", audioCodec)
-
-		// Add custom audio bitrate if specified and validated
-		if customParams.AudioBitrate != "" {
-			if err := securityPolicy.ValidateBitrate(customParams.AudioBitrate); err != nil {
-				if verbose {
-					color.Red("Security validation failed for audio bitrate: %v", err)
-				}
-				return nil
-			}
-			args = append(args, "-b:a", customParams.AudioBitrate)
+// addAudioCodecWithValidation adds audio codec with security validation
+func (b *FFmpegCommandBuilder) addAudioCodecWithValidation(audioCodec string, customParams CustomParameters) error {
+	// Validate audio codec - prevent command injection
+	if err := securityPolicy.ValidateCodec(audioCodec, "audio"); err != nil {
+		if b.verbose {
+			color.Red("Security validation failed for audio codec: %v", err)
 		}
+		return err
 	}
 
-	// Add resolution scaling if specified and validated
-	if customParams.Resolution != "" {
-		if err := securityPolicy.ValidateResolution(customParams.Resolution); err != nil {
-			if verbose {
-				color.Red("Security validation failed for resolution: %v", err)
+	// Only use the validated codec name - no additional parameters
+	b.args = append(b.args, "-c:a", audioCodec)
+
+	// Add custom audio bitrate if specified and validated
+	if customParams.AudioBitrate != "" {
+		if err := securityPolicy.ValidateBitrate(customParams.AudioBitrate); err != nil {
+			if b.verbose {
+				color.Red("Security validation failed for audio bitrate: %v", err)
 			}
-			return nil
+			return err
 		}
-		args = append(args, "-s", customParams.Resolution)
+		b.args = append(b.args, "-b:a", customParams.AudioBitrate)
 	}
 
-	// Add framerate if specified and validated
-	if customParams.Framerate != "" {
-		if err := securityPolicy.ValidateFramerate(customParams.Framerate); err != nil {
-			if verbose {
-				color.Red("Security validation failed for framerate: %v", err)
-			}
-			return nil
+	return nil
+}
+
+// addResolutionParameter adds resolution parameter with validation
+func (b *FFmpegCommandBuilder) addResolutionParameter(resolution string) error {
+	if err := securityPolicy.ValidateResolution(resolution); err != nil {
+		if b.verbose {
+			color.Red("Security validation failed for resolution: %v", err)
 		}
-		args = append(args, "-r", customParams.Framerate)
+		return err
 	}
+	b.args = append(b.args, "-s", resolution)
+	return nil
+}
 
-	// Add output file
-	args = append(args, "-y", output) // -y to overwrite without asking
+// addFramerateParameter adds framerate parameter with validation
+func (b *FFmpegCommandBuilder) addFramerateParameter(framerate string) error {
+	if err := securityPolicy.ValidateFramerate(framerate); err != nil {
+		if b.verbose {
+			color.Red("Security validation failed for framerate: %v", err)
+		}
+		return err
+	}
+	b.args = append(b.args, "-r", framerate)
+	return nil
+}
 
-	return exec.Command(args[0], args[1:]...)
+// buildFFmpegCommandWithCustomParams constructs the FFmpeg command with custom parameters
+// This function now uses the builder pattern for improved maintainability
+func buildFFmpegCommandWithCustomParams(input, output, videoCodec, audioCodec, preset string, customParams CustomParameters, verbose bool) *exec.Cmd {
+	builder := NewFFmpegCommandBuilder(verbose)
+
+	return builder.
+		WithInput(input).
+		WithVideoCodec(videoCodec, customParams).
+		WithAudioCodec(audioCodec, customParams).
+		WithCustomParameters(customParams).
+		WithOutput(output).
+		Build()
 }
 
 // buildFFmpegCommand constructs the FFmpeg command with all parameters (legacy function)
@@ -785,10 +963,10 @@ func prepareAudioExtractionCommand(params AudioExtractionParams, mediaInfo *anal
 // displayAudioExtractionInfo shows extraction information in verbose mode
 func displayAudioExtractionInfo(params AudioExtractionParams, codec string, command []string) {
 	outputExt := strings.ToLower(filepath.Ext(params.OutputFile))
-	
+
 	fmt.Printf("🎵 Extracting audio to %s format\n", strings.TrimPrefix(outputExt, "."))
 	fmt.Printf("🔧 Using codec: %s\n", codec)
-	
+
 	if params.Bitrate != "" || hasQualityBitrate(params.Quality) {
 		bitrate := params.Bitrate
 		if bitrate == "" {
@@ -796,7 +974,7 @@ func displayAudioExtractionInfo(params AudioExtractionParams, codec string, comm
 		}
 		fmt.Printf("📊 Bitrate: %s\n", bitrate)
 	}
-	
+
 	fmt.Printf("Command: %s\n", strings.Join(command, " "))
 	fmt.Println()
 }
