@@ -659,12 +659,50 @@ func formatDuration(d time.Duration) string {
 
 // ExtractAudio extracts audio from a video file with specified parameters
 func ExtractAudio(params AudioExtractionParams) error {
-	// Step 1: Validate input file
+	// Step 1: Validate all parameters
+	if err := validateAudioExtractionParams(params); err != nil {
+		return err
+	}
+
+	// Step 2: Analyze input media
+	mediaInfo, err := analyzeInputForAudioExtraction(params)
+	if err != nil {
+		return err
+	}
+
+	// Step 3: Select codec and build command
+	codec, command, err := prepareAudioExtractionCommand(params, mediaInfo)
+	if err != nil {
+		return err
+	}
+
+	// Step 4: Display extraction info if verbose
+	if params.Verbose {
+		displayAudioExtractionInfo(params, codec, command)
+	}
+
+	// Step 5: Execute extraction
+	return executeAudioExtraction(params, command, mediaInfo)
+}
+
+// validateAudioExtractionParams performs comprehensive validation of audio extraction parameters
+func validateAudioExtractionParams(params AudioExtractionParams) error {
+	// Validate input file
 	if err := validateInputFile(params.InputFile); err != nil {
 		return err
 	}
 
-	// Step 2: Security validation for file paths
+	// Security validation for file paths
+	if err := validateAudioExtractionPaths(params); err != nil {
+		return err
+	}
+
+	// Security validation for audio parameters
+	return validateAudioExtractionAudioParams(params)
+}
+
+// validateAudioExtractionPaths validates file paths for audio extraction
+func validateAudioExtractionPaths(params AudioExtractionParams) error {
 	if err := securityPolicy.ValidateFilePath(params.InputFile); err != nil {
 		return fmt.Errorf("security validation failed for input path: %w", err)
 	}
@@ -677,7 +715,11 @@ func ExtractAudio(params AudioExtractionParams) error {
 		return fmt.Errorf("security validation failed for output format: %w", err)
 	}
 
-	// Step 3: Security validation for audio parameters
+	return nil
+}
+
+// validateAudioExtractionAudioParams validates audio-specific parameters
+func validateAudioExtractionAudioParams(params AudioExtractionParams) error {
 	if params.Codec != "" {
 		if err := securityPolicy.ValidateCodec(params.Codec, "audio"); err != nil {
 			return fmt.Errorf("security validation failed for audio codec: %w", err)
@@ -688,7 +730,6 @@ func ExtractAudio(params AudioExtractionParams) error {
 		return fmt.Errorf("security validation failed for bitrate: %w", err)
 	}
 
-	// Validate other audio parameters
 	if params.SampleRate != "" {
 		if err := validateSampleRate(params.SampleRate); err != nil {
 			return fmt.Errorf("invalid sample rate: %w", err)
@@ -701,64 +742,87 @@ func ExtractAudio(params AudioExtractionParams) error {
 		}
 	}
 
-	// Step 4: Analyze input media to get audio info
+	return nil
+}
+
+// analyzeInputForAudioExtraction analyzes the input media and validates audio streams
+func analyzeInputForAudioExtraction(params AudioExtractionParams) (*analyzer.MediaInfo, error) {
 	if params.Verbose {
 		color.Cyan("🔍 Analyzing input media...")
 	}
 
 	mediaInfo, err := analyzer.AnalyzeMedia(params.InputFile)
 	if err != nil {
-		return fmt.Errorf("failed to analyze input media: %w", err)
+		return nil, fmt.Errorf("failed to analyze input media: %w", err)
 	}
 
 	// Check if input has audio streams
 	if len(mediaInfo.AudioStreams) == 0 {
-		return fmt.Errorf("no audio streams found in input file: %s", params.InputFile)
+		return nil, fmt.Errorf("no audio streams found in input file: %s", params.InputFile)
 	}
 
-	// Step 5: Determine output format and codec
+	return mediaInfo, nil
+}
+
+// prepareAudioExtractionCommand selects codec and builds the FFmpeg command
+func prepareAudioExtractionCommand(params AudioExtractionParams, mediaInfo *analyzer.MediaInfo) (string, []string, error) {
+	// Determine output format and codec
 	outputExt := strings.ToLower(filepath.Ext(params.OutputFile))
 	codec, err := selectAudioCodec(outputExt, params.Codec)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 
-	// Step 6: Build FFmpeg command with security validation
+	// Build FFmpeg command with security validation
 	command := buildAudioExtractionCommandSecure(params, codec, mediaInfo)
 	if command == nil {
-		return fmt.Errorf("failed to build secure audio extraction command")
+		return "", nil, fmt.Errorf("failed to build secure audio extraction command")
 	}
 
-	if params.Verbose {
-		fmt.Printf("🎵 Extracting audio to %s format\n", strings.TrimPrefix(outputExt, "."))
-		fmt.Printf("🔧 Using codec: %s\n", codec)
-		if params.Bitrate != "" || hasQualityBitrate(params.Quality) {
-			bitrate := params.Bitrate
-			if bitrate == "" {
-				bitrate = getQualityBitrate(params.Quality)
-			}
-			fmt.Printf("📊 Bitrate: %s\n", bitrate)
+	return codec, command, nil
+}
+
+// displayAudioExtractionInfo shows extraction information in verbose mode
+func displayAudioExtractionInfo(params AudioExtractionParams, codec string, command []string) {
+	outputExt := strings.ToLower(filepath.Ext(params.OutputFile))
+	
+	fmt.Printf("🎵 Extracting audio to %s format\n", strings.TrimPrefix(outputExt, "."))
+	fmt.Printf("🔧 Using codec: %s\n", codec)
+	
+	if params.Bitrate != "" || hasQualityBitrate(params.Quality) {
+		bitrate := params.Bitrate
+		if bitrate == "" {
+			bitrate = getQualityBitrate(params.Quality)
 		}
-		fmt.Printf("Command: %s\n", strings.Join(command, " "))
-		fmt.Println()
+		fmt.Printf("📊 Bitrate: %s\n", bitrate)
 	}
+	
+	fmt.Printf("Command: %s\n", strings.Join(command, " "))
+	fmt.Println()
+}
 
-	// Step 7: Execute FFmpeg command
+// executeAudioExtraction executes the audio extraction command
+func executeAudioExtraction(params AudioExtractionParams, command []string, mediaInfo *analyzer.MediaInfo) error {
 	if params.Verbose {
 		color.Green("🚀 Starting audio extraction...")
 	}
 
 	cmd := exec.Command(command[0], command[1:]...)
 
+	var err error
 	if params.Verbose {
 		// For verbose mode, show real-time progress
-		return executeFFmpegWithProgress(cmd, mediaInfo)
+		err = executeFFmpegWithProgress(cmd, mediaInfo)
 	} else {
 		// For quiet mode, just run and wait
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("audio extraction failed: %w\nOutput: %s", err, string(output))
+		output, cmdErr := cmd.CombinedOutput()
+		if cmdErr != nil {
+			err = fmt.Errorf("audio extraction failed: %w\nOutput: %s", cmdErr, string(output))
 		}
+	}
+
+	if err != nil {
+		return err
 	}
 
 	if params.Verbose {

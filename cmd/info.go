@@ -86,10 +86,17 @@ func runInfo(filepath string) error {
 }
 
 func displayMediaInfo(info *analyzer.MediaInfo, verbose bool, writer io.Writer) {
-	// Check if we're writing to a file (disable colors)
 	isFile := writer != os.Stdout
 
-	// Header
+	displayHeader(verbose, isFile, writer)
+	displayFileInfo(info, verbose, isFile, writer)
+	displayVideoStreams(info.VideoStreams, verbose, isFile, writer)
+	displayAudioStreams(info.AudioStreams, verbose, isFile, writer)
+	displayTechnicalSummary(info, verbose, isFile, writer)
+}
+
+// displayHeader renders the header section of the media info display
+func displayHeader(verbose, isFile bool, writer io.Writer) {
 	if isFile {
 		fmt.Fprintln(writer, "===============================================")
 		if verbose {
@@ -108,13 +115,16 @@ func displayMediaInfo(info *analyzer.MediaInfo, verbose bool, writer io.Writer) 
 		color.Cyan("└─────────────────────────────────────────────┘")
 	}
 	fmt.Fprintln(writer)
+}
 
-	// File information
+// displayFileInfo renders file information section
+func displayFileInfo(info *analyzer.MediaInfo, verbose, isFile bool, writer io.Writer) {
 	if isFile {
 		fmt.Fprintln(writer, "File Information:")
 	} else {
 		color.Yellow("📁 File Information:")
 	}
+
 	fmt.Fprintf(writer, "   Name: %s\n", filepath.Base(info.Filename))
 	if verbose {
 		fmt.Fprintf(writer, "   Full Path: %s\n", info.Filename)
@@ -124,100 +134,153 @@ func displayMediaInfo(info *analyzer.MediaInfo, verbose bool, writer io.Writer) 
 	fmt.Fprintf(writer, "   Format: %s\n", strings.ToUpper(info.Format))
 	fmt.Fprintf(writer, "   Duration: %v\n", formatDuration(info.Duration))
 	fmt.Fprintf(writer, "   Size: %s\n", formatBytes(info.Size))
+
 	if info.Bitrate > 0 {
 		fmt.Fprintf(writer, "   Overall Bitrate: %s\n", formatBitrate(info.Bitrate))
 	}
 
 	if verbose {
-		fmt.Fprintf(writer, "   Duration (seconds): %.3f\n", info.Duration.Seconds())
-		fmt.Fprintf(writer, "   Size (bytes): %d\n", info.Size)
-		if info.Bitrate > 0 {
-			fmt.Fprintf(writer, "   Bitrate (bps): %d\n", info.Bitrate)
-		}
+		displayVerboseFileInfo(info, writer)
 	}
 	fmt.Fprintln(writer)
+}
 
-	// Video streams
-	if len(info.VideoStreams) > 0 {
-		if isFile {
-			fmt.Fprintln(writer, "Video Streams:")
-		} else {
-			color.Green("🎥 Video Streams:")
-		}
-		for i, stream := range info.VideoStreams {
-			fmt.Fprintf(writer, "   Stream %d:\n", i+1)
-			if verbose {
-				fmt.Fprintf(writer, "     Stream Index: %d\n", stream.Index)
-			}
-			fmt.Fprintf(writer, "     Codec: %s\n", stream.Codec)
-			fmt.Fprintf(writer, "     Resolution: %dx%d\n", stream.Width, stream.Height)
-			fmt.Fprintf(writer, "     Frame Rate: %s\n", stream.FrameRate)
-			fmt.Fprintf(writer, "     Pixel Format: %s\n", stream.PixelFormat)
-			if stream.Bitrate > 0 {
-				fmt.Fprintf(writer, "     Bitrate: %s\n", formatBitrate(stream.Bitrate))
-				if verbose {
-					fmt.Fprintf(writer, "     Bitrate (bps): %d\n", stream.Bitrate)
-				}
-			}
-			if verbose {
-				fmt.Fprintf(writer, "     Aspect Ratio: %.2f:1\n", float64(stream.Width)/float64(stream.Height))
-				totalPixels := stream.Width * stream.Height
-				fmt.Fprintf(writer, "     Total Pixels: %d\n", totalPixels)
-			}
-			fmt.Fprintln(writer)
-		}
+// displayVerboseFileInfo renders additional file information in verbose mode
+func displayVerboseFileInfo(info *analyzer.MediaInfo, writer io.Writer) {
+	fmt.Fprintf(writer, "   Duration (seconds): %.3f\n", info.Duration.Seconds())
+	fmt.Fprintf(writer, "   Size (bytes): %d\n", info.Size)
+	if info.Bitrate > 0 {
+		fmt.Fprintf(writer, "   Bitrate (bps): %d\n", info.Bitrate)
+	}
+}
+
+// displayVideoStreams renders video stream information
+func displayVideoStreams(streams []analyzer.VideoStream, verbose, isFile bool, writer io.Writer) {
+	if len(streams) == 0 {
+		return
 	}
 
-	// Audio streams
-	if len(info.AudioStreams) > 0 {
-		if isFile {
-			fmt.Fprintln(writer, "Audio Streams:")
-		} else {
-			color.Magenta("🔊 Audio Streams:")
-		}
-		for i, stream := range info.AudioStreams {
-			fmt.Fprintf(writer, "   Stream %d:\n", i+1)
-			if verbose {
-				fmt.Fprintf(writer, "     Stream Index: %d\n", stream.Index)
-			}
-			fmt.Fprintf(writer, "     Codec: %s\n", stream.Codec)
-			fmt.Fprintf(writer, "     Sample Rate: %d Hz\n", stream.SampleRate)
-			fmt.Fprintf(writer, "     Channels: %d\n", stream.Channels)
-			if stream.Bitrate > 0 {
-				fmt.Fprintf(writer, "     Bitrate: %s\n", formatBitrate(stream.Bitrate))
-				if verbose {
-					fmt.Fprintf(writer, "     Bitrate (bps): %d\n", stream.Bitrate)
-				}
-			}
-			if stream.Language != "" && stream.Language != "und" {
-				fmt.Fprintf(writer, "     Language: %s\n", stream.Language)
-			} else if verbose {
-				fmt.Fprintf(writer, "     Language: %s (undefined)\n", stream.Language)
-			}
-			if verbose {
-				channelLayout := getChannelLayout(stream.Channels)
-				fmt.Fprintf(writer, "     Channel Layout: %s\n", channelLayout)
-			}
-			fmt.Fprintln(writer)
+	if isFile {
+		fmt.Fprintln(writer, "Video Streams:")
+	} else {
+		color.Green("🎥 Video Streams:")
+	}
+
+	for i, stream := range streams {
+		displayVideoStream(stream, i+1, verbose, writer)
+	}
+}
+
+// displayVideoStream renders a single video stream
+func displayVideoStream(stream analyzer.VideoStream, streamNum int, verbose bool, writer io.Writer) {
+	fmt.Fprintf(writer, "   Stream %d:\n", streamNum)
+
+	if verbose {
+		fmt.Fprintf(writer, "     Stream Index: %d\n", stream.Index)
+	}
+
+	fmt.Fprintf(writer, "     Codec: %s\n", stream.Codec)
+	fmt.Fprintf(writer, "     Resolution: %dx%d\n", stream.Width, stream.Height)
+	fmt.Fprintf(writer, "     Frame Rate: %s\n", stream.FrameRate)
+	fmt.Fprintf(writer, "     Pixel Format: %s\n", stream.PixelFormat)
+
+	if stream.Bitrate > 0 {
+		fmt.Fprintf(writer, "     Bitrate: %s\n", formatBitrate(stream.Bitrate))
+		if verbose {
+			fmt.Fprintf(writer, "     Bitrate (bps): %d\n", stream.Bitrate)
 		}
 	}
 
 	if verbose {
-		if isFile {
-			fmt.Fprintln(writer, "Technical Summary:")
-		} else {
-			color.Blue("🔧 Technical Summary:")
-		}
-		fmt.Fprintf(writer, "   Total Streams: %d\n", len(info.VideoStreams)+len(info.AudioStreams))
-		fmt.Fprintf(writer, "   Video Streams: %d\n", len(info.VideoStreams))
-		fmt.Fprintf(writer, "   Audio Streams: %d\n", len(info.AudioStreams))
-		if len(info.VideoStreams) > 0 && info.Duration > 0 {
-			fps := parseFrameRate(info.VideoStreams[0].FrameRate)
-			totalFrames := int(info.Duration.Seconds() * fps)
-			fmt.Fprintf(writer, "   Estimated Total Frames: %d\n", totalFrames)
-		}
-		fmt.Fprintln(writer)
+		displayVerboseVideoInfo(stream, writer)
 	}
+	fmt.Fprintln(writer)
+}
+
+// displayVerboseVideoInfo renders additional video information in verbose mode
+func displayVerboseVideoInfo(stream analyzer.VideoStream, writer io.Writer) {
+	fmt.Fprintf(writer, "     Aspect Ratio: %.2f:1\n", float64(stream.Width)/float64(stream.Height))
+	totalPixels := stream.Width * stream.Height
+	fmt.Fprintf(writer, "     Total Pixels: %d\n", totalPixels)
+}
+
+// displayAudioStreams renders audio stream information
+func displayAudioStreams(streams []analyzer.AudioStream, verbose, isFile bool, writer io.Writer) {
+	if len(streams) == 0 {
+		return
+	}
+
+	if isFile {
+		fmt.Fprintln(writer, "Audio Streams:")
+	} else {
+		color.Magenta("🔊 Audio Streams:")
+	}
+
+	for i, stream := range streams {
+		displayAudioStream(stream, i+1, verbose, writer)
+	}
+}
+
+// displayAudioStream renders a single audio stream
+func displayAudioStream(stream analyzer.AudioStream, streamNum int, verbose bool, writer io.Writer) {
+	fmt.Fprintf(writer, "   Stream %d:\n", streamNum)
+
+	if verbose {
+		fmt.Fprintf(writer, "     Stream Index: %d\n", stream.Index)
+	}
+
+	fmt.Fprintf(writer, "     Codec: %s\n", stream.Codec)
+	fmt.Fprintf(writer, "     Sample Rate: %d Hz\n", stream.SampleRate)
+	fmt.Fprintf(writer, "     Channels: %d\n", stream.Channels)
+
+	if stream.Bitrate > 0 {
+		fmt.Fprintf(writer, "     Bitrate: %s\n", formatBitrate(stream.Bitrate))
+		if verbose {
+			fmt.Fprintf(writer, "     Bitrate (bps): %d\n", stream.Bitrate)
+		}
+	}
+
+	displayAudioLanguage(stream, verbose, writer)
+
+	if verbose {
+		channelLayout := getChannelLayout(stream.Channels)
+		fmt.Fprintf(writer, "     Channel Layout: %s\n", channelLayout)
+	}
+	fmt.Fprintln(writer)
+}
+
+// displayAudioLanguage renders audio language information
+func displayAudioLanguage(stream analyzer.AudioStream, verbose bool, writer io.Writer) {
+	if stream.Language != "" && stream.Language != "und" {
+		fmt.Fprintf(writer, "     Language: %s\n", stream.Language)
+	} else if verbose {
+		fmt.Fprintf(writer, "     Language: %s (undefined)\n", stream.Language)
+	}
+}
+
+// displayTechnicalSummary renders technical summary in verbose mode
+func displayTechnicalSummary(info *analyzer.MediaInfo, verbose, isFile bool, writer io.Writer) {
+	if !verbose {
+		return
+	}
+
+	if isFile {
+		fmt.Fprintln(writer, "Technical Summary:")
+	} else {
+		color.Blue("🔧 Technical Summary:")
+	}
+
+	totalStreams := len(info.VideoStreams) + len(info.AudioStreams)
+	fmt.Fprintf(writer, "   Total Streams: %d\n", totalStreams)
+	fmt.Fprintf(writer, "   Video Streams: %d\n", len(info.VideoStreams))
+	fmt.Fprintf(writer, "   Audio Streams: %d\n", len(info.AudioStreams))
+
+	if len(info.VideoStreams) > 0 && info.Duration > 0 {
+		fps := parseFrameRate(info.VideoStreams[0].FrameRate)
+		totalFrames := int(info.Duration.Seconds() * fps)
+		fmt.Fprintf(writer, "   Estimated Total Frames: %d\n", totalFrames)
+	}
+	fmt.Fprintln(writer)
 }
 
 // Helper functions for formatting
